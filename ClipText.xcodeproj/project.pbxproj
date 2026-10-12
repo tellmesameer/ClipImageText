@@ -393,6 +393,7 @@
 				CODE_SIGN_ENTITLEMENTS = ClipText/ClipText.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ClipText/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ClipText;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -413,6 +414,7 @@
 				CODE_SIGN_ENTITLEMENTS = ClipText/ClipText.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ClipText/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = ClipText;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;

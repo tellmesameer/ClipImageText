@@ -265,7 +265,7 @@ struct SettingsView: View {
                     settingsCard {
                         VStack(alignment: .leading, spacing: 8) {
                             Toggle("Launch at login", isOn: $appState.launchAtLogin)
-                            Text("Start clipboard automatically after you sign in.")
+                            Text("Start ClipText automatically after you sign in.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

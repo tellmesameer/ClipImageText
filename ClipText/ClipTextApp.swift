@@ -8,9 +8,15 @@ struct ClipTextApp: App {
     var body: some Scene {
         MenuBarExtra("ClipText", systemImage: "doc.on.clipboard") {
             Button {
+                appState.showPanel()
+            } label: {
+                Label("Clipboard History (\(appState.hotKey.displayString))", systemImage: "clock.arrow.circlepath")
+            }
+
+            Button {
                 appState.startScreenOCR()
             } label: {
-                Label("Extract Text from Screen…", systemImage: "text.viewfinder")
+                Label("Extract Text from Screen… (\(appState.ocrHotKey.displayString))", systemImage: "text.viewfinder")
             }
 
             Button {
