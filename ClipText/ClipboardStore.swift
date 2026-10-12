@@ -80,6 +80,25 @@ final class ClipboardStore: ObservableObject {
         return removedCount
     }
 
+    @discardableResult
+    func addText(
+        _ text: String,
+        sourceApplication: ClipboardSourceApplication? = nil,
+        now: Date = Date()
+    ) -> ClipboardItem? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let snapshot = ClipboardSnapshot(
+            text: text,
+            richTextData: nil,
+            imageData: nil,
+            imageType: nil,
+            fileURLs: []
+        )
+        ingest(snapshot, sourceApplication: sourceApplication, now: now)
+        return items.first(where: { $0.fingerprint == snapshot.fingerprint })
+    }
+
     func ingest(
         _ snapshot: ClipboardSnapshot,
         sourceApplication: ClipboardSourceApplication? = nil,

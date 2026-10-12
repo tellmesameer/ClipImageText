@@ -24,6 +24,18 @@
 		A10000000000000000000012 /* QuickLookPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* QuickLookPreview.swift */; };
 		A10000000000000000000013 /* LocalOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* LocalOCRService.swift */; };
 		A10000000000000000000014 /* SecureLocalStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* SecureLocalStorage.swift */; };
+		A10000000000000000000015 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* Logger.swift */; };
+		A10000000000000000000016 /* OCRModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* OCRModels.swift */; };
+		A10000000000000000000017 /* TextProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* TextProcessor.swift */; };
+		A10000000000000000000018 /* OCRManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* OCRManager.swift */; };
+		A10000000000000000000019 /* ScreenCaptureManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* ScreenCaptureManager.swift */; };
+		A1000000000000000000001A /* SelectionOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001A /* SelectionOverlayView.swift */; };
+		A1000000000000000000001B /* SelectionWindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001B /* SelectionWindowManager.swift */; };
+		A1000000000000000000001C /* SelectionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001C /* SelectionController.swift */; };
+		A1000000000000000000001D /* PermissionsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001D /* PermissionsManager.swift */; };
+		A1000000000000000000001E /* CaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001E /* CaptureCoordinator.swift */; };
+		A1000000000000000000001F /* TextProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001F /* TextProcessorTests.swift */; };
+		A10000000000000000000020 /* ScreenOCRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000020 /* ScreenOCRTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +59,18 @@
 		A20000000000000000000012 /* QuickLookPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookPreview.swift; sourceTree = "<group>"; };
 		A20000000000000000000013 /* LocalOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalOCRService.swift; sourceTree = "<group>"; };
 		A20000000000000000000014 /* SecureLocalStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureLocalStorage.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 /* OCRModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRModels.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 /* TextProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextProcessor.swift; sourceTree = "<group>"; };
+		A20000000000000000000018 /* OCRManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRManager.swift; sourceTree = "<group>"; };
+		A20000000000000000000019 /* ScreenCaptureManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCaptureManager.swift; sourceTree = "<group>"; };
+		A2000000000000000000001A /* SelectionOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionOverlayView.swift; sourceTree = "<group>"; };
+		A2000000000000000000001B /* SelectionWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionWindowManager.swift; sourceTree = "<group>"; };
+		A2000000000000000000001C /* SelectionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionController.swift; sourceTree = "<group>"; };
+		A2000000000000000000001D /* PermissionsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsManager.swift; sourceTree = "<group>"; };
+		A2000000000000000000001E /* CaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureCoordinator.swift; sourceTree = "<group>"; };
+		A2000000000000000000001F /* TextProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextProcessorTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000020 /* ScreenOCRTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenOCRTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,6 +118,16 @@
 				A20000000000000000000012 /* QuickLookPreview.swift */,
 				A20000000000000000000013 /* LocalOCRService.swift */,
 				A20000000000000000000014 /* SecureLocalStorage.swift */,
+				A20000000000000000000015 /* Logger.swift */,
+				A20000000000000000000016 /* OCRModels.swift */,
+				A20000000000000000000017 /* TextProcessor.swift */,
+				A20000000000000000000018 /* OCRManager.swift */,
+				A20000000000000000000019 /* ScreenCaptureManager.swift */,
+				A2000000000000000000001A /* SelectionOverlayView.swift */,
+				A2000000000000000000001B /* SelectionWindowManager.swift */,
+				A2000000000000000000001C /* SelectionController.swift */,
+				A2000000000000000000001D /* PermissionsManager.swift */,
+				A2000000000000000000001E /* CaptureCoordinator.swift */,
 				A20000000000000000000009 /* Assets.xcassets */,
 			);
 			path = ClipText;
@@ -103,6 +137,8 @@
 			isa = PBXGroup;
 			children = (
 				A2000000000000000000000A /* ClipboardTests.swift */,
+				A2000000000000000000001F /* TextProcessorTests.swift */,
+				A20000000000000000000020 /* ScreenOCRTests.swift */,
 			);
 			path = ClipTextTests;
 			sourceTree = "<group>";
@@ -232,6 +268,16 @@
 				A10000000000000000000012 /* QuickLookPreview.swift in Sources */,
 				A10000000000000000000013 /* LocalOCRService.swift in Sources */,
 				A10000000000000000000014 /* SecureLocalStorage.swift in Sources */,
+				A10000000000000000000015 /* Logger.swift in Sources */,
+				A10000000000000000000016 /* OCRModels.swift in Sources */,
+				A10000000000000000000017 /* TextProcessor.swift in Sources */,
+				A10000000000000000000018 /* OCRManager.swift in Sources */,
+				A10000000000000000000019 /* ScreenCaptureManager.swift in Sources */,
+				A1000000000000000000001A /* SelectionOverlayView.swift in Sources */,
+				A1000000000000000000001B /* SelectionWindowManager.swift in Sources */,
+				A1000000000000000000001C /* SelectionController.swift in Sources */,
+				A1000000000000000000001D /* PermissionsManager.swift in Sources */,
+				A1000000000000000000001E /* CaptureCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -240,6 +286,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000000000000000000000A /* ClipboardTests.swift in Sources */,
+				A1000000000000000000001F /* TextProcessorTests.swift in Sources */,
+				A10000000000000000000020 /* ScreenOCRTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

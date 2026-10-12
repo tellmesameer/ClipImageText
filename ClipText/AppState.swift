@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 enum HotKeyTarget: String, Equatable {
     case history
     case gif
+    case ocr
     case stackStart
     case stackNext
 }
@@ -108,6 +109,27 @@ final class AppState: ObservableObject {
                 gifHotKey = oldGIFHotKey
             } else {
                 oldGIFHotKey = gifHotKey
+            }
+        }
+    }
+
+    @Published var ocrHotKey: HotKeyConfiguration {
+        didSet {
+            UserDefaults.standard.set(try? JSONEncoder().encode(ocrHotKey), forKey: Keys.ocrHotKey)
+            guard hasStarted else {
+                oldOCRHotKey = ocrHotKey
+                return
+            }
+            guard !isHotKeyInUse(ocrHotKey, excluding: .ocr) else {
+                statusMessage = "Hotkeys must be different."
+                ocrHotKey = oldOCRHotKey
+                return
+            }
+            if !ocrHotKeyManager.register(ocrHotKey) {
+                statusMessage = "OCR hotkey unavailable; previous configuration kept."
+                ocrHotKey = oldOCRHotKey
+            } else {
+                oldOCRHotKey = ocrHotKey
             }
         }
     }
@@ -226,6 +248,8 @@ final class AppState: ObservableObject {
 
     let store: ClipboardStore
     let snippetStore: SnippetStore
+    let permissionsManager = PermissionsManager()
+    let captureCoordinator: CaptureCoordinator
 
     var isDeviceAuthenticationAvailable: Bool {
         authenticationService.isAvailable
@@ -236,6 +260,7 @@ final class AppState: ObservableObject {
     private let gifHotKeyManager = GlobalHotKeyManager(identifier: 2)
     private let stackStartHotKeyManager = GlobalHotKeyManager(identifier: 3)
     private let stackNextHotKeyManager = GlobalHotKeyManager(identifier: 4)
+    private let ocrHotKeyManager = GlobalHotKeyManager(identifier: 5)
     private let panelController = ClipboardPanelController()
     private let screenshotCaptureService = ScreenshotCaptureService()
     private let screenGIFRecorder = ScreenGIFRecorder()
@@ -252,12 +277,14 @@ final class AppState: ObservableObject {
     private var isAuthenticatingPrivateView = false
     private var oldHotKey: HotKeyConfiguration
     private var oldGIFHotKey: HotKeyConfiguration
+    private var oldOCRHotKey: HotKeyConfiguration
     private var oldStackStartHotKey: HotKeyConfiguration?
     private var oldStackNextHotKey: HotKeyConfiguration?
     private var recordingHotKeyTarget: HotKeyTarget?
     private enum Keys {
         static let hotKey = "clipboard.hotKey"
         static let gifHotKey = "clipboard.gifHotKey"
+        static let ocrHotKey = "clipboard.ocrHotKey"
         static let stackStartHotKey = "clipboard.stackStartHotKey"
         static let stackNextHotKey = "clipboard.stackNextHotKey"
         static let historyLimit = "clipboard.historyLimit"
@@ -278,8 +305,14 @@ final class AppState: ObservableObject {
             retention: savedRetention
         )
         snippetStore = SnippetStore()
+        captureCoordinator = CaptureCoordinator(
+            store: store,
+            monitor: monitor,
+            permissionsManager: permissionsManager
+        )
         let savedHotKey = (UserDefaults.standard.data(forKey: Keys.hotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .default
         let savedGIFHotKey = (UserDefaults.standard.data(forKey: Keys.gifHotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .gifDefault
+        let savedOCRHotKey = (UserDefaults.standard.data(forKey: Keys.ocrHotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .ocrDefault
         let savedStackStartHotKey = UserDefaults.standard.data(forKey: Keys.stackStartHotKey)
             .flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }
         let savedStackNextHotKey = UserDefaults.standard.data(forKey: Keys.stackNextHotKey)
@@ -293,6 +326,8 @@ final class AppState: ObservableObject {
         oldHotKey = savedHotKey
         gifHotKey = savedGIFHotKey
         oldGIFHotKey = savedGIFHotKey
+        ocrHotKey = savedOCRHotKey
+        oldOCRHotKey = savedOCRHotKey
         stackStartHotKey = savedStackStartHotKey
         oldStackStartHotKey = savedStackStartHotKey
         stackNextHotKey = savedStackNextHotKey
@@ -312,6 +347,9 @@ final class AppState: ObservableObject {
         }
         gifHotKeyManager.onHotKey = { [weak self] in
             self?.toggleGIFRecording()
+        }
+        ocrHotKeyManager.onHotKey = { [weak self] in
+            self?.startScreenOCR()
         }
         stackStartHotKeyManager.onHotKey = { [weak self] in
             self?.startClipboardStack()
@@ -338,6 +376,7 @@ final class AppState: ObservableObject {
         monitor.start()
         oldHotKey = hotKey
         oldGIFHotKey = gifHotKey
+        oldOCRHotKey = ocrHotKey
         oldStackStartHotKey = stackStartHotKey
         oldStackNextHotKey = stackNextHotKey
         if !hotKeyManager.register(hotKey) {
@@ -345,6 +384,9 @@ final class AppState: ObservableObject {
         }
         if !gifHotKeyManager.register(gifHotKey) {
             statusMessage = "Could not register \(gifHotKey.displayString) for GIF recording."
+        }
+        if !ocrHotKeyManager.register(ocrHotKey) {
+            statusMessage = "Could not register \(ocrHotKey.displayString) for Screen OCR."
         }
         _ = stackStartHotKeyManager.register(stackStartHotKey)
         _ = stackNextHotKeyManager.register(stackNextHotKey)
@@ -360,6 +402,7 @@ final class AppState: ObservableObject {
         monitor.stop()
         hotKeyManager.stop()
         gifHotKeyManager.stop()
+        ocrHotKeyManager.stop()
         stackStartHotKeyManager.stop()
         stackNextHotKeyManager.stop()
         screenGIFRecorder.cancel()
@@ -816,6 +859,7 @@ final class AppState: ObservableObject {
         switch target {
         case .history: prompt = "Press a new history combination…"
         case .gif: prompt = "Press a new GIF combination…"
+        case .ocr: prompt = "Press a new screen OCR combination…"
         case .stackStart: prompt = "Press a new stack start combination…"
         case .stackNext: prompt = "Press a new paste next combination…"
         }
@@ -846,6 +890,12 @@ final class AppState: ObservableObject {
                 if registered {
                     self.oldGIFHotKey = self.gifHotKey
                     self.gifHotKey = candidate
+                }
+            case .ocr:
+                registered = self.ocrHotKeyManager.register(candidate)
+                if registered {
+                    self.oldOCRHotKey = self.ocrHotKey
+                    self.ocrHotKey = candidate
                 }
             case .stackStart:
                 registered = self.stackStartHotKeyManager.register(candidate)
@@ -893,7 +943,7 @@ final class AppState: ObservableObject {
         case .stackNext:
             stackNextHotKey = nil
             statusMessage = "Paste next hotkey cleared."
-        case .history, .gif:
+        case .history, .gif, .ocr:
             break
         }
     }
@@ -911,12 +961,28 @@ final class AppState: ObservableObject {
         let configured: [(HotKeyTarget, HotKeyConfiguration?)] = [
             (.history, hotKey),
             (.gif, gifHotKey),
+            (.ocr, ocrHotKey),
             (.stackStart, stackStartHotKey),
             (.stackNext, stackNextHotKey)
         ]
         return configured.contains { configuredTarget, configuration in
             configuredTarget != target && configuration == candidate
         }
+    }
+
+    func startScreenOCR() {
+        panelController.close()
+        annotationEditorController.close()
+        settingsWindow?.orderOut(nil)
+        captureCoordinator.startCapture()
+    }
+
+    func openScreenRecordingSettings() {
+        permissionsManager.openScreenRecordingSettings()
+    }
+
+    func relaunchForPermissions() {
+        permissionsManager.relaunchApplication()
     }
 
     func openAccessibilitySettings() {

@@ -1,0 +1,97 @@
+//
+//  OCRModels.swift
+//  ClipText
+//
+//  Adapted from TextGrab (https://github.com/arsh342/TextGrab)
+//  Copyright (c) 2026 arsh342. MIT License.
+//
+
+import CoreGraphics
+import Foundation
+import Vision
+
+enum OCRMode: String, CaseIterable, Codable {
+    case normal
+    case code
+    case table
+
+    var displayName: String {
+        switch self {
+        case .normal: return String(localized: "Text")
+        case .code: return String(localized: "Code")
+        case .table: return String(localized: "Table")
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .normal: return "text.alignleft"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .table: return "tablecells"
+        }
+    }
+}
+
+struct OCRObservation: Equatable, Codable {
+    let text: String
+    let confidence: Float
+    let boundingBox: CGRect
+
+    var center: CGPoint {
+        CGPoint(x: boundingBox.midX, y: boundingBox.midY)
+    }
+}
+
+struct OCRResult: Equatable, Codable {
+    let text: String
+    let observations: [OCRObservation]
+    let detectedCodes: [DetectedCode]
+}
+
+struct DetectedCode: Equatable, Codable {
+    let value: String
+    let symbology: String
+    let boundingBox: CGRect
+}
+
+struct OCRConfiguration: Codable {
+    var recognitionLevel: RecognitionLevel = .accurate
+    var languages: [String] = ["en-US"]
+    var usesLanguageCorrection: Bool = true
+    var mode: OCRMode = .normal
+    var customWords: [String] = []
+    var minimumTextHeight: Float = 0.0
+
+    static let `default` = OCRConfiguration.accurate
+    static let fast = OCRConfiguration(recognitionLevel: .fast)
+    static let accurate = OCRConfiguration(recognitionLevel: .accurate)
+}
+
+extension OCRConfiguration {
+    enum RecognitionLevel: String, CaseIterable, Codable {
+        case fast = "fast"
+        case accurate = "accurate"
+
+        var displayName: String {
+            switch self {
+            case .fast: return String(localized: "Fast")
+            case .accurate: return String(localized: "Accurate")
+            }
+        }
+
+        var vnLevel: VNRequestTextRecognitionLevel {
+            switch self {
+            case .fast: return .fast
+            case .accurate: return .accurate
+            }
+        }
+    }
+
+    func apply(to request: VNRecognizeTextRequest) {
+        request.recognitionLevel = mode == .normal ? recognitionLevel.vnLevel : .accurate
+        request.recognitionLanguages = languages
+        request.usesLanguageCorrection = mode == .normal ? usesLanguageCorrection : false
+        request.customWords = customWords
+        request.minimumTextHeight = minimumTextHeight
+    }
+}

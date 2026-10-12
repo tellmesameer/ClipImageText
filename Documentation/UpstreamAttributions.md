@@ -45,7 +45,17 @@ SOFTWARE.
 
 - **Repository**: [https://github.com/arsh342/TextGrab](https://github.com/arsh342/TextGrab)
 - **License**: MIT License (Copyright © 2026 arsh342)
-- **Used For**: Reference implementation for screen selection overlay, ScreenCaptureKit capture pipeline, and Apple Vision OCR processing.
+- **Used For**: Reference implementation and adapted components for screen selection overlay, ScreenCaptureKit capture pipeline, and Apple Vision OCR processing:
+  - `TextGrab/OCR/TextProcessor.swift` -> `ClipText/TextProcessor.swift`
+  - `TextGrab/OCR/OCRModels.swift` -> `ClipText/OCRModels.swift`
+  - `TextGrab/OCR/OCRManager.swift` -> `ClipText/OCRManager.swift`
+  - `TextGrab/Capture/ScreenCaptureManager.swift` -> `ClipText/ScreenCaptureManager.swift`
+  - `TextGrab/Selection/SelectionOverlayView.swift` -> `ClipText/SelectionOverlayView.swift`
+  - `TextGrab/Selection/SelectionWindowManager.swift` -> `ClipText/SelectionWindowManager.swift`
+  - `TextGrab/Selection/SelectionController.swift` -> `ClipText/SelectionController.swift`
+  - `TextGrab/Permissions/PermissionsManager.swift` -> `ClipText/PermissionsManager.swift`
+  - `TextGrab/App/CaptureCoordinator.swift` -> `ClipText/CaptureCoordinator.swift`
+  - `TextGrabTests/TextProcessorTests.swift` -> `ClipTextTests/TextProcessorTests.swift`
 
 ### Full License Text:
 ```text

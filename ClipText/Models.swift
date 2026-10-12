@@ -480,6 +480,7 @@ struct HotKeyConfiguration: Codable, Equatable {
 
     static let `default` = HotKeyConfiguration(keyCode: 9, modifiers: UInt32(cmdKey | shiftKey))
     static let gifDefault = HotKeyConfiguration(keyCode: 5, modifiers: UInt32(cmdKey))
+    static let ocrDefault = HotKeyConfiguration(keyCode: 17, modifiers: UInt32(optionKey | shiftKey))
 
     var displayString: String {
         var value = ""

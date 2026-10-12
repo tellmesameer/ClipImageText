@@ -51,6 +51,15 @@ struct SettingsView: View {
                                 .padding(.vertical, 12)
 
                             hotKeyRow(
+                                title: "Extract text (Screen OCR)",
+                                configuration: appState.ocrHotKey,
+                                target: .ocr
+                            )
+
+                            Divider()
+                                .padding(.vertical, 12)
+
+                            hotKeyRow(
                                 title: "Record GIF",
                                 configuration: appState.gifHotKey,
                                 target: .gif
@@ -286,6 +295,45 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.top, 12)
+                        }
+                    }
+                }
+
+                settingsSection("Permissions") {
+                    settingsCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label(
+                                    "Screen Recording",
+                                    systemImage: appState.permissionsManager.hasScreenRecordingPermission
+                                        ? "checkmark.circle.fill"
+                                        : "exclamationmark.triangle.fill"
+                                )
+                                Spacer()
+                                Text(appState.permissionsManager.hasScreenRecordingPermission ? "Granted" : "Required")
+                                    .foregroundStyle(appState.permissionsManager.hasScreenRecordingPermission ? .green : .orange)
+                            }
+
+                            Text("Required for selecting screen regions and recognizing text via Apple Vision. Relaunch ClipText after granting access for changes to take effect.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if !appState.permissionsManager.hasScreenRecordingPermission {
+                                HStack {
+                                    Button("Open System Settings") {
+                                        appState.openScreenRecordingSettings()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    Button("Relaunch ClipText") {
+                                        appState.relaunchForPermissions()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
                         }
                     }
                 }

@@ -8,6 +8,12 @@ struct ClipTextApp: App {
     var body: some Scene {
         MenuBarExtra("ClipText", systemImage: "doc.on.clipboard") {
             Button {
+                appState.startScreenOCR()
+            } label: {
+                Label("Extract Text from Screen…", systemImage: "text.viewfinder")
+            }
+
+            Button {
                 appState.captureAndAnnotate()
             } label: {
                 Label("Capture and Annotate…", systemImage: "camera.viewfinder")
