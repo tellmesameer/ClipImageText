@@ -11,7 +11,7 @@ final class ClipboardStore: ObservableObject {
     private let fileManager = FileManager.default
     private let historyURL: URL
     private let cipher: LocalDataCipher
-    private var canPersist = true
+    private var isBlockedToProtectExistingHistory = false
     private(set) var limit: Int
     private(set) var retention: ClipboardRetention
 
@@ -106,8 +106,11 @@ final class ClipboardStore: ObservableObject {
     ) {
         guard !snapshot.isEmpty else { return }
         let fileReferences = snapshot.fileURLs.compactMap(makeFileReference)
-        let existingItem = items.first(where: { $0.fingerprint == snapshot.fingerprint })
-        let wasPinned = existingItem?.isPinned ?? false
+        let existingIndex = items.firstIndex(where: {
+            $0.fingerprint == snapshot.fingerprint || $0.fingerprint == snapshot.legacyV1Fingerprint
+        })
+        let wasPinned = existingIndex.map { items[$0].isPinned } ?? false
+        let existingSourceApp = existingIndex.flatMap { items[$0].sourceApplication }
         let item = ClipboardItem(
             createdAt: now,
             fingerprint: snapshot.fingerprint,
@@ -117,11 +120,13 @@ final class ClipboardStore: ObservableObject {
             imageType: snapshot.imageType,
             files: fileReferences,
             isPinned: wasPinned,
-            sourceApplication: sourceApplication ?? existingItem?.sourceApplication
+            sourceApplication: sourceApplication ?? existingSourceApp
         )
         guard !item.isEmpty else { return }
 
-        items.removeAll { $0.fingerprint == item.fingerprint }
+        if let existingIndex {
+            items.remove(at: existingIndex)
+        }
         items.insert(item, at: 0)
         _ = pruneExpired(now: now, persist: false)
         sortItems()
@@ -171,7 +176,7 @@ final class ClipboardStore: ObservableObject {
             items.forEach { scheduleOCRIfNeeded(for: $0) }
         } catch {
             items = []
-            canPersist = false
+            isBlockedToProtectExistingHistory = true
             persistenceErrorMessage = "Encrypted history could not be opened. Existing data was preserved."
         }
     }
@@ -220,7 +225,7 @@ final class ClipboardStore: ObservableObject {
     }
 
     private func save() {
-        guard canPersist else { return }
+        guard !isBlockedToProtectExistingHistory else { return }
         do {
             let directory = historyURL.deletingLastPathComponent()
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -228,8 +233,8 @@ final class ClipboardStore: ObservableObject {
             let encryptedData = try cipher.seal(plaintext, purpose: "clipboard-history")
             try encryptedData.write(to: historyURL, options: .atomic)
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: historyURL.path)
+            persistenceErrorMessage = nil
         } catch {
-            canPersist = false
             persistenceErrorMessage = "Encrypted history could not be saved. Clipboard capture remains available in memory."
         }
     }
@@ -243,7 +248,7 @@ final class SnippetStore: ObservableObject {
     private let fileManager = FileManager.default
     private let snippetsURL: URL
     private let cipher: LocalDataCipher
-    private var canPersist = true
+    private var isBlockedToProtectExistingData = false
 
     init(directoryURL: URL? = nil, cipher: LocalDataCipher = .keychainBacked) {
         let directory = directoryURL ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -336,7 +341,7 @@ final class SnippetStore: ObservableObject {
             if !openedData.wasEncrypted { save() }
         } catch {
             snippets = []
-            canPersist = false
+            isBlockedToProtectExistingData = true
             persistenceErrorMessage = "Encrypted Library data could not be opened. Existing data was preserved."
         }
     }
@@ -346,7 +351,7 @@ final class SnippetStore: ObservableObject {
     }
 
     private func save() {
-        guard canPersist else { return }
+        guard !isBlockedToProtectExistingData else { return }
         do {
             let directory = snippetsURL.deletingLastPathComponent()
             try fileManager.createDirectory(
@@ -358,8 +363,8 @@ final class SnippetStore: ObservableObject {
             let encryptedData = try cipher.seal(plaintext, purpose: "clipboard-library")
             try encryptedData.write(to: snippetsURL, options: .atomic)
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snippetsURL.path)
+            persistenceErrorMessage = nil
         } catch {
-            canPersist = false
             persistenceErrorMessage = "Encrypted Library data could not be saved. Items remain available in memory."
         }
     }

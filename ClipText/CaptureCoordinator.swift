@@ -123,12 +123,12 @@ final class CaptureCoordinator: ObservableObject {
             )
 
             // Suppress monitor capture and record fingerprint for deduplication
-            monitor?.suppressCapture(for: 1.0)
             monitor?.suppressFingerprint(snapshot.fingerprint)
 
             // Write to system pasteboard
             pasteboard.clearContents()
             pasteboard.setString(recognizedText, forType: .string)
+            monitor?.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
 
             // Ingest into unified store
             let sourceApp = previousApp.flatMap { app -> ClipboardSourceApplication? in

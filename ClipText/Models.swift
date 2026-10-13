@@ -462,7 +462,7 @@ struct ClipboardSnapshot {
         return !hasText && imageData == nil && fileURLs.isEmpty
     }
 
-    var fingerprint: String {
+    var legacyV1Fingerprint: String {
         var data = Data()
         if let text { data.append(Data(text.utf8)) }
         if let richTextData { data.append(richTextData) }
@@ -472,6 +472,26 @@ struct ClipboardSnapshot {
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
+
+    var fingerprint: String {
+        var data = Data("cliptext-v2\n".utf8)
+        func appendField(tag: String, content: Data?) {
+            guard let content else { return }
+            data.append(Data("\(tag):\(content.count):".utf8))
+            data.append(content)
+            data.append(0)
+        }
+
+        if let text { appendField(tag: "T", content: Data(text.utf8)) }
+        if let richTextData { appendField(tag: "R", content: richTextData) }
+        if let imageData { appendField(tag: "I", content: imageData) }
+        if let imageType { appendField(tag: "M", content: Data(imageType.utf8)) }
+        for url in fileURLs {
+            appendField(tag: "F", content: Data(url.standardizedFileURL.path.utf8))
+        }
+        let digest = SHA256.hash(data: data)
+        return "v2:" + digest.map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 struct HotKeyConfiguration: Codable, Equatable {
@@ -479,8 +499,31 @@ struct HotKeyConfiguration: Codable, Equatable {
     var modifiers: UInt32
 
     static let `default` = HotKeyConfiguration(keyCode: 9, modifiers: UInt32(cmdKey | shiftKey))
-    static let gifDefault = HotKeyConfiguration(keyCode: 5, modifiers: UInt32(cmdKey))
+    static let legacyGifDefault = HotKeyConfiguration(keyCode: 5, modifiers: UInt32(cmdKey))
+    static let gifDefault = HotKeyConfiguration(keyCode: 5, modifiers: UInt32(optionKey | shiftKey))
     static let ocrDefault = HotKeyConfiguration(keyCode: 17, modifiers: UInt32(optionKey | shiftKey))
+
+    static func resolveGIFHotKey(userDefaults: UserDefaults = .standard) -> HotKeyConfiguration {
+        let rawSavedGIFData = userDefaults.data(forKey: "clipboard.gifHotKey")
+        let hasMigratedGIF = userDefaults.bool(forKey: "clipboard.hasMigratedGIFHotKey")
+        let decodedGIFHotKey = rawSavedGIFData.flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }
+
+        if let decoded = decodedGIFHotKey {
+            if !hasMigratedGIF && decoded == .legacyGifDefault {
+                userDefaults.removeObject(forKey: "clipboard.gifHotKey")
+                userDefaults.set(true, forKey: "clipboard.hasMigratedGIFHotKey")
+                return .gifDefault
+            } else {
+                if !hasMigratedGIF {
+                    userDefaults.set(true, forKey: "clipboard.hasMigratedGIFHotKey")
+                }
+                return decoded
+            }
+        } else {
+            userDefaults.set(true, forKey: "clipboard.hasMigratedGIFHotKey")
+            return .gifDefault
+        }
+    }
 
     var displayString: String {
         var value = ""

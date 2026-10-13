@@ -1,5 +1,6 @@
 import Carbon.HIToolbox
 import AppKit
+import SwiftUI
 import XCTest
 @testable import ClipText
 
@@ -729,10 +730,12 @@ final class ClipboardTests: XCTestCase {
         XCTAssertTrue(HotKeyConfiguration.default.displayString.contains("V"))
     }
 
-    func testDefaultGIFHotKeyIsCommandG() {
+    func testDefaultGIFHotKeyIsOptionShiftG() {
         XCTAssertEqual(HotKeyConfiguration.gifDefault.keyCode, 5)
-        XCTAssertEqual(HotKeyConfiguration.gifDefault.modifiers, UInt32(cmdKey))
-        XCTAssertEqual(HotKeyConfiguration.gifDefault.displayString, "⌘G")
+        XCTAssertEqual(HotKeyConfiguration.gifDefault.modifiers, UInt32(optionKey | shiftKey))
+        XCTAssertEqual(HotKeyConfiguration.gifDefault.displayString, "⌥⇧G")
+        XCTAssertEqual(HotKeyConfiguration.legacyGifDefault.modifiers, UInt32(cmdKey))
+        XCTAssertEqual(HotKeyConfiguration.legacyGifDefault.displayString, "⌘G")
     }
 
     func testAnnotationToolsKeepTheMVPSet() {
@@ -1153,5 +1156,223 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(store.items.count, 2)
         let updatedItem1 = try XCTUnwrap(store.items.first(where: { $0.text == "item-1" }))
         XCTAssertTrue(updatedItem1.isPinned)
+    }
+
+
+    @MainActor
+    func testPasteboardMonitorDoesNotDropUserCopiesDuringAppWriteSuppression() {
+        let testPasteboard = NSPasteboard.withUniqueName()
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        var receivedSnapshots: [ClipboardSnapshot] = []
+        monitor.onSnapshot = { snapshot, _ in receivedSnapshots.append(snapshot) }
+
+        // 1. App writes to pasteboard and explicitly records the write
+        testPasteboard.clearContents()
+        testPasteboard.setString("OCR Result", forType: .string)
+        monitor.recordAppOriginatedWrite(changeCount: testPasteboard.changeCount, fingerprint: "v2:app-fingerprint")
+
+        monitor.poll()
+        XCTAssertTrue(receivedSnapshots.isEmpty, "App write must be suppressed")
+
+        // 2. User immediately copies external text
+        testPasteboard.clearContents()
+        testPasteboard.setString("User Copied Text", forType: .string)
+        monitor.poll()
+
+        XCTAssertEqual(receivedSnapshots.count, 1, "User copy must be captured")
+        XCTAssertEqual(receivedSnapshots.first?.text, "User Copied Text")
+    }
+
+    @MainActor
+    func testPasteboardMonitorLegacySuppressCaptureDoesNotDropSubsequentUserCopies() {
+        let testPasteboard = NSPasteboard.withUniqueName()
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        var receivedSnapshots: [ClipboardSnapshot] = []
+        monitor.onSnapshot = { snapshot, _ in receivedSnapshots.append(snapshot) }
+
+        monitor.suppressCapture(for: 10.0)
+        // App write occurs
+        testPasteboard.clearContents()
+        testPasteboard.setString("App Text", forType: .string)
+        monitor.poll()
+        XCTAssertTrue(receivedSnapshots.isEmpty, "App write must be consumed")
+
+        // User copies during the remaining window
+        testPasteboard.clearContents()
+        testPasteboard.setString("User Text Within Window", forType: .string)
+        monitor.poll()
+        XCTAssertEqual(receivedSnapshots.count, 1, "User copy during window must be captured")
+        XCTAssertEqual(receivedSnapshots.first?.text, "User Text Within Window")
+    }
+
+    func testScreenCaptureManagerCacheInvalidationReentrancySafe() async {
+        let manager = ScreenCaptureManager()
+        await manager.invalidateCache()
+        await manager.invalidateCache()
+    }
+
+    func testGIFHotKeyDefaultMigrationPreservesCustomization() throws {
+        let suiteName = "test.gif.migration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Case A: Fresh install (no key set) -> defaults to Option+Shift+G and marks migrated
+        let fresh = HotKeyConfiguration.resolveGIFHotKey(userDefaults: defaults)
+        XCTAssertEqual(fresh, .gifDefault)
+        XCTAssertTrue(defaults.bool(forKey: "clipboard.hasMigratedGIFHotKey"))
+
+        // Reset domain
+        defaults.removePersistentDomain(forName: suiteName)
+
+        // Case B: Legacy default (Cmd+G with hasMigrated == false) -> migrated to Option+Shift+G
+        let legacyData = try JSONEncoder().encode(HotKeyConfiguration.legacyGifDefault)
+        defaults.set(legacyData, forKey: "clipboard.gifHotKey")
+        defaults.set(false, forKey: "clipboard.hasMigratedGIFHotKey")
+
+        let migrated = HotKeyConfiguration.resolveGIFHotKey(userDefaults: defaults)
+        XCTAssertEqual(migrated, .gifDefault)
+        XCTAssertTrue(defaults.bool(forKey: "clipboard.hasMigratedGIFHotKey"))
+        XCTAssertNil(defaults.data(forKey: "clipboard.gifHotKey"), "Legacy preference should be cleared so it tracks the new default")
+
+        // Reset domain
+        defaults.removePersistentDomain(forName: suiteName)
+
+        // Case C: User-customized shortcut (e.g. Ctrl+Opt+G) -> preserved!
+        let custom = HotKeyConfiguration(keyCode: 5, modifiers: UInt32(controlKey | optionKey))
+        let customData = try JSONEncoder().encode(custom)
+        defaults.set(customData, forKey: "clipboard.gifHotKey")
+        defaults.set(false, forKey: "clipboard.hasMigratedGIFHotKey")
+
+        let resolvedCustom = HotKeyConfiguration.resolveGIFHotKey(userDefaults: defaults)
+        XCTAssertEqual(resolvedCustom, custom, "Custom user shortcut must not be overwritten")
+        XCTAssertTrue(defaults.bool(forKey: "clipboard.hasMigratedGIFHotKey"))
+        XCTAssertEqual(defaults.data(forKey: "clipboard.gifHotKey"), customData)
+    }
+
+    @MainActor
+    func testPersistenceTransientSaveErrorDoesNotPermanentlyDisableSaves() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = ClipboardStore(directoryURL: directory, cipher: testCipher)
+
+        // Initial save should succeed
+        store.addText("Initial Item")
+        XCTAssertNil(store.persistenceErrorMessage)
+        let historyURL = directory.appendingPathComponent("history.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURL.path))
+
+        // Simulate transient write failure by making directory read-only
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        store.addText("Transient Item 1")
+        XCTAssertNotNil(store.persistenceErrorMessage, "Transient error should report error message")
+
+        // Restore write permissions to simulate transient error condition clearing
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+
+        // Subsequent write should succeed and clear the error message
+        store.addText("Recovered Item 2")
+        XCTAssertNil(store.persistenceErrorMessage, "Subsequent save must succeed and clear error message")
+
+        // Reload store and verify data was persisted
+        let reloaded = ClipboardStore(directoryURL: directory, cipher: testCipher)
+        XCTAssertEqual(reloaded.items.count, 3)
+        XCTAssertEqual(reloaded.items.first?.text, "Recovered Item 2")
+    }
+
+    @MainActor
+    func testLoadSafeguardEngagedWhenHistoryCannotBeDecrypted() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let historyURL = directory.appendingPathComponent("history.json")
+
+        // Write undecryptable/corrupted data to history.json
+        let corruptedData = Data("this-is-not-valid-encrypted-or-json-data".utf8)
+        try corruptedData.write(to: historyURL)
+
+        // Loading should fail, engaging the safeguard
+        let store = ClipboardStore(directoryURL: directory, cipher: testCipher)
+        XCTAssertEqual(store.items.count, 0)
+        XCTAssertEqual(store.persistenceErrorMessage, "Encrypted history could not be opened. Existing data was preserved.")
+
+        // Adding items in memory must NOT overwrite the existing undecryptable history file
+        store.addText("New In-Memory Item")
+        XCTAssertEqual(store.items.count, 1)
+
+        let onDiskData = try Data(contentsOf: historyURL)
+        XCTAssertEqual(onDiskData, corruptedData, "Existing history file must NOT be overwritten when safeguard is active")
+    }
+
+    func testSnapshotFingerprintsDoNotCollideAcrossFieldBoundaries() {
+        // Snapshot 1: text "ab", richText "cd"
+        let snap1 = ClipboardSnapshot(
+            text: "ab",
+            richTextData: Data("cd".utf8),
+            imageData: nil,
+            imageType: nil,
+            fileURLs: []
+        )
+        // Snapshot 2: text "abc", richText "d"
+        let snap2 = ClipboardSnapshot(
+            text: "abc",
+            richTextData: Data("d".utf8),
+            imageData: nil,
+            imageType: nil,
+            fileURLs: []
+        )
+
+        // Demonstrating the legacy v1 flaw: both appended "abcd" and produced the exact same hash
+        XCTAssertEqual(snap1.legacyV1Fingerprint, snap2.legacyV1Fingerprint, "Legacy v1 fingerprints collide across field boundaries")
+
+        // Demonstrating v2 fix: length-prefixed tagged fields prevent collision
+        XCTAssertNotEqual(snap1.fingerprint, snap2.fingerprint, "v2 fingerprints must not collide across field boundaries")
+        XCTAssertTrue(snap1.fingerprint.hasPrefix("v2:"))
+        XCTAssertTrue(snap2.fingerprint.hasPrefix("v2:"))
+    }
+
+    @MainActor
+    func testStoreDeduplicatesAndUpgradesLegacyFingerprint() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let historyURL = directory.appendingPathComponent("history.json")
+
+        let snapshot = ClipboardSnapshot(
+            text: "Existing Item With Legacy Fingerprint",
+            richTextData: nil,
+            imageData: nil,
+            imageType: nil,
+            fileURLs: []
+        )
+
+        // Seed history file with an item containing the legacy v1 fingerprint (as saved by older version)
+        let legacyItem = ClipboardItem(
+            createdAt: Date().addingTimeInterval(-60),
+            fingerprint: snapshot.legacyV1Fingerprint,
+            text: snapshot.text,
+            richTextData: nil,
+            imageData: nil,
+            imageType: nil,
+            files: [],
+            isPinned: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let plaintext = try encoder.encode([legacyItem])
+        let encrypted = try testCipher.seal(plaintext, purpose: "clipboard-history")
+        try encrypted.write(to: historyURL)
+
+        // Load store from disk
+        let store = ClipboardStore(directoryURL: directory, cipher: testCipher)
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(store.items[0].fingerprint, snapshot.legacyV1Fingerprint)
+        XCTAssertFalse(store.items[0].fingerprint.hasPrefix("v2:"))
+
+        // Now ingest the snapshot
+        store.ingest(snapshot)
+
+        // Must deduplicate (count remains 1) and preserve pinned status
+        XCTAssertEqual(store.items.count, 1, "Must deduplicate against legacy v1 fingerprint")
+        let updatedItem = store.items[0]
+        XCTAssertTrue(updatedItem.isPinned, "Must preserve pinned status")
+        XCTAssertEqual(updatedItem.fingerprint, snapshot.fingerprint, "Must upgrade to v2 fingerprint")
+        XCTAssertTrue(updatedItem.fingerprint.hasPrefix("v2:"))
     }
 }

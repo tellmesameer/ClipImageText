@@ -28,6 +28,7 @@ protocol ScreenCaptureService: Actor {
 actor ScreenCaptureManager: ScreenCaptureService {
     private var availableContent: SCShareableContent?
     private var contentLoadTask: Task<SCShareableContent, Error>?
+    private var currentOperationID: UUID?
     private var displayChangeObserver: NSObjectProtocol?
     private var observerInstalled = false
 
@@ -98,6 +99,7 @@ actor ScreenCaptureManager: ScreenCaptureService {
         availableContent = nil
         contentLoadTask?.cancel()
         contentLoadTask = nil
+        currentOperationID = nil
         Logger.shared.debug("ScreenCaptureKit cache invalidated")
     }
 
@@ -110,6 +112,9 @@ actor ScreenCaptureManager: ScreenCaptureService {
             return try await existingTask.value
         }
 
+        let operationID = UUID()
+        currentOperationID = operationID
+
         let task = Task { () -> SCShareableContent in
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             return content
@@ -118,14 +123,18 @@ actor ScreenCaptureManager: ScreenCaptureService {
 
         do {
             let content = try await task.value
-            if !task.isCancelled {
-                availableContent = content
+            if currentOperationID == operationID {
+                if !task.isCancelled {
+                    availableContent = content
+                }
+                contentLoadTask = nil
+                currentOperationID = nil
             }
-            contentLoadTask = nil
             return content
         } catch {
-            if unsafeBitCast(contentLoadTask, to: UInt.self) == unsafeBitCast(task, to: UInt.self) {
+            if currentOperationID == operationID {
                 contentLoadTask = nil
+                currentOperationID = nil
             }
             throw error
         }

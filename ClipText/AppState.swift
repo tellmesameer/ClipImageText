@@ -285,6 +285,7 @@ final class AppState: ObservableObject {
     private enum Keys {
         static let hotKey = "clipboard.hotKey"
         static let gifHotKey = "clipboard.gifHotKey"
+        static let hasMigratedGIFHotKey = "clipboard.hasMigratedGIFHotKey"
         static let ocrHotKey = "clipboard.ocrHotKey"
         static let stackStartHotKey = "clipboard.stackStartHotKey"
         static let stackNextHotKey = "clipboard.stackNextHotKey"
@@ -312,7 +313,9 @@ final class AppState: ObservableObject {
             permissionsManager: permissionsManager
         )
         let savedHotKey = (UserDefaults.standard.data(forKey: Keys.hotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .default
-        let savedGIFHotKey = (UserDefaults.standard.data(forKey: Keys.gifHotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .gifDefault
+
+        let savedGIFHotKey = HotKeyConfiguration.resolveGIFHotKey()
+
         let savedOCRHotKey = (UserDefaults.standard.data(forKey: Keys.ocrHotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .ocrDefault
         let savedStackStartHotKey = UserDefaults.standard.data(forKey: Keys.stackStartHotKey)
             .flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }
@@ -518,20 +521,22 @@ final class AppState: ObservableObject {
 
     private func copyExtractedText(_ text: String, sourceApplication: ClipboardSourceApplication? = nil) {
         let pasteboard = NSPasteboard.general
-        monitor.suppressCapture()
+        let snapshot = ClipboardSnapshot(
+            text: text,
+            richTextData: nil,
+            imageData: nil,
+            imageType: nil,
+            fileURLs: []
+        )
+        monitor.suppressFingerprint(snapshot.fingerprint)
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
             statusMessage = "The extracted text could not be copied."
             return
         }
 
-        store.ingest(ClipboardSnapshot(
-            text: text,
-            richTextData: nil,
-            imageData: nil,
-            imageType: nil,
-            fileURLs: []
-        ), sourceApplication: sourceApplication)
+        monitor.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
+        store.ingest(snapshot, sourceApplication: sourceApplication)
         statusMessage = "Extracted text copied to the clipboard."
     }
 
@@ -1037,19 +1042,21 @@ final class AppState: ObservableObject {
 
     private func copyAnnotatedScreenshot(_ data: Data) {
         let pasteboard = NSPasteboard.general
-        monitor.suppressCapture()
-        pasteboard.clearContents()
-        guard pasteboard.setData(data, forType: .png) else {
-            statusMessage = "The annotated screenshot could not be copied."
-            return
-        }
-        store.ingest(ClipboardSnapshot(
+        let snapshot = ClipboardSnapshot(
             text: nil,
             richTextData: nil,
             imageData: data,
             imageType: NSPasteboard.PasteboardType.png.rawValue,
             fileURLs: []
-        ))
+        )
+        monitor.suppressFingerprint(snapshot.fingerprint)
+        pasteboard.clearContents()
+        guard pasteboard.setData(data, forType: .png) else {
+            statusMessage = "The annotated screenshot could not be copied."
+            return
+        }
+        monitor.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
+        store.ingest(snapshot)
         statusMessage = "Annotated screenshot copied to the clipboard."
     }
 
@@ -1145,20 +1152,22 @@ final class AppState: ObservableObject {
     private func copyGIFToClipboard(_ data: Data) {
         let pasteboard = NSPasteboard.general
         let gifType = NSPasteboard.PasteboardType(UTType.gif.identifier)
-        monitor.suppressCapture()
+        let snapshot = ClipboardSnapshot(
+            text: nil,
+            richTextData: nil,
+            imageData: data,
+            imageType: gifType.rawValue,
+            fileURLs: []
+        )
+        monitor.suppressFingerprint(snapshot.fingerprint)
         pasteboard.clearContents()
         guard pasteboard.setData(data, forType: gifType) else {
             statusMessage = "The GIF could not be copied to the clipboard."
             return
         }
 
-        store.ingest(ClipboardSnapshot(
-            text: nil,
-            richTextData: nil,
-            imageData: data,
-            imageType: gifType.rawValue,
-            fileURLs: []
-        ))
+        monitor.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
+        store.ingest(snapshot)
         statusMessage = "GIF copied to the clipboard. Press ⌘V to paste."
     }
 
@@ -1175,7 +1184,7 @@ final class AppState: ObservableObject {
 
         panelController.close()
         let pasteboard = NSPasteboard.general
-        monitor.suppressCapture()
+        monitor.suppressFingerprint(item.fingerprint)
         pasteboard.clearContents()
 
         if let text = payload.text { pasteboard.setString(text, forType: .string) }
@@ -1185,6 +1194,7 @@ final class AppState: ObservableObject {
         }
         let urls = payload.fileURLs
         if !urls.isEmpty { pasteboard.writeObjects(urls as [NSURL]) }
+        monitor.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: item.fingerprint)
 
         guard let destination = targetApplicationOverride ?? targetApplication else {
             statusMessage = "Item restored to the clipboard. Press ⌘V to paste."

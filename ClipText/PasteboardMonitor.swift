@@ -10,8 +10,10 @@ final class PasteboardMonitor {
     private let pasteboard: NSPasteboard
     private var timer: Timer?
     private var lastChangeCount: Int
-    private var suppressedUntil = Date.distantPast
+    private var suppressedChangeCounts: Set<Int> = []
     private var suppressedFingerprints: Set<String> = []
+    private var expectedAppWriteChangeCount: Int?
+    private var suppressedUntil = Date.distantPast
     private(set) var isPaused = false
     private var pausedUntil: Date?
 
@@ -36,9 +38,19 @@ final class PasteboardMonitor {
         timer = nil
     }
 
+    /// Explicitly registers a pasteboard write performed by ClipText so the monitor avoids duplicate ingestion.
+    func recordAppOriginatedWrite(changeCount: Int, fingerprint: String? = nil) {
+        suppressedChangeCounts.insert(changeCount)
+        lastChangeCount = changeCount
+        if let fingerprint {
+            suppressedFingerprints.insert(fingerprint)
+        }
+    }
+
+    /// Legacy suppression helper. Sets expected change count without dropping external user copies.
     func suppressCapture(for duration: TimeInterval = 0.8) {
         suppressedUntil = Date().addingTimeInterval(duration)
-        lastChangeCount = pasteboard.changeCount
+        expectedAppWriteChangeCount = pasteboard.changeCount + 1
     }
 
     func suppressFingerprint(_ fingerprint: String) {
@@ -75,15 +87,48 @@ final class PasteboardMonitor {
         refreshPauseState(now: now)
         let changeCount = pasteboard.changeCount
         guard changeCount != lastChangeCount else { return }
-        lastChangeCount = changeCount
 
-        guard now >= suppressedUntil else { return }
-        guard !isPaused else { return }
+        // 1. If this exact change was explicitly registered as an app write, consume suppression and discard.
+        if suppressedChangeCounts.remove(changeCount) != nil {
+            lastChangeCount = changeCount
+            return
+        }
+
+        // 2. If this change matches an expected app-originated write, consume and discard.
+        if let expected = expectedAppWriteChangeCount, changeCount == expected {
+            expectedAppWriteChangeCount = nil
+            lastChangeCount = changeCount
+            return
+        }
+
+        guard !isPaused else {
+            lastChangeCount = changeCount
+            return
+        }
+
         let sourceApplication = sourceApplication(for: NSWorkspace.shared.frontmostApplication)
-        guard !shouldIgnore(bundleIdentifier: sourceApplication?.bundleIdentifier) else { return }
-        guard let snapshot = makeSnapshot(from: pasteboard) else { return }
-        if suppressedFingerprints.remove(snapshot.fingerprint) != nil { return }
-        guard !consumeIgnoreNextCopy() else { return }
+        guard !shouldIgnore(bundleIdentifier: sourceApplication?.bundleIdentifier) else {
+            lastChangeCount = changeCount
+            return
+        }
+
+        guard let snapshot = makeSnapshot(from: pasteboard) else {
+            lastChangeCount = changeCount
+            return
+        }
+
+        // 3. If fingerprint matches a suppressed app write, consume and discard.
+        if suppressedFingerprints.remove(snapshot.fingerprint) != nil {
+            lastChangeCount = changeCount
+            return
+        }
+
+        guard !consumeIgnoreNextCopy() else {
+            lastChangeCount = changeCount
+            return
+        }
+
+        lastChangeCount = changeCount
         onSnapshot?(snapshot, sourceApplication)
     }
 
