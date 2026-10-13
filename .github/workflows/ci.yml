@@ -116,10 +116,11 @@ jobs:
         run: |
           APP_PATH="build/DerivedData/Build/Products/Release/ClipText.app"
           VERSION=$(plutil -extract CFBundleShortVersionString raw "${APP_PATH}/Contents/Info.plist" 2>/dev/null || echo "1.0")
-          ARCHIVE="build/ClipText-${VERSION}.zip"
-          (cd build/DerivedData/Build/Products/Release && zip -q -r -y "../../../../${ARCHIVE}" "ClipText.app")
+          ARCHIVE="${GITHUB_WORKSPACE}/build/ClipText-${VERSION}.zip"
+          mkdir -p "$(dirname "${ARCHIVE}")"
+          (cd build/DerivedData/Build/Products/Release && zip -q -r -y "${ARCHIVE}" "ClipText.app")
           echo "✓ Archive created: ${ARCHIVE}"
-          ls -lh "build/ClipText-${VERSION}.zip"
+          ls -lh "${ARCHIVE}"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
