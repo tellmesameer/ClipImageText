@@ -853,10 +853,10 @@ struct ClipboardPanelView: View {
                 }
             }
         }
-        .onChange(of: searchQuery) { _ in
+        .onChange(of: searchQuery) {
             keepSelectionVisible(in: items)
         }
-        .onChange(of: store.items) { _ in
+        .onChange(of: store.items) {
             keepSelectionVisible(in: items)
         }
         .onExitCommand(perform: clearSearchOrClose)

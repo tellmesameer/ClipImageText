@@ -7,6 +7,25 @@ struct ClipTextApp: App {
 
     var body: some Scene {
         MenuBarExtra("ClipText", systemImage: "doc.on.clipboard") {
+            if !appState.permissionsManager.hasScreenRecordingPermission || !appState.isAccessibilityTrusted {
+                Menu {
+                    if !appState.permissionsManager.hasScreenRecordingPermission {
+                        Button("Enable Screen Recording") {
+                            appState.openScreenRecordingSettings()
+                        }
+                    }
+                    if !appState.isAccessibilityTrusted {
+                        Button("Enable Accessibility for Automatic Paste") {
+                            appState.openAccessibilitySettings()
+                        }
+                    }
+                } label: {
+                    Label("Action Needed", systemImage: "exclamationmark.triangle.fill")
+                }
+
+                Divider()
+            }
+
             Button {
                 appState.showPanel()
             } label: {

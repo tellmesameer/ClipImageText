@@ -242,6 +242,43 @@ final class ScreenOCRTests: XCTestCase {
         )
     }
 
+    func testInstallationHealthFindsOnlyOtherExistingInstallations() {
+        let duplicates = InstallationHealth.duplicateInstallations(
+            currentPath: "/Applications/ClipText.app",
+            candidatePaths: ["/Applications/ClipText.app", "/Users/test/Applications/ClipText.app"],
+            fileExists: { $0.contains("/Users/test") }
+        )
+        XCTAssertEqual(duplicates, ["/Users/test/Applications/ClipText.app"])
+    }
+
+    func testCaptureRecoveryMessagesExplainSafeNextSteps() {
+        XCTAssertTrue(CaptureRecovery.screenRecordingRequired.contains("Open Settings"))
+        XCTAssertTrue(CaptureRecovery.noTextFound.contains("try again"))
+        XCTAssertTrue(CaptureRecovery.recognitionFailed.contains("clipboard and history were left unchanged"))
+    }
+
+    func testDiagnosticsReportIsRedacted() {
+        let health = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: "B6537Y9X84"
+        )
+        let report = DiagnosticsReport.make(
+            version: "1.0",
+            build: "1",
+            health: health,
+            hasScreenRecordingPermission: true,
+            isAccessibilityTrusted: false,
+            historyHotKey: "⌘⇧V",
+            ocrHotKey: "⌥⇧T"
+        )
+        XCTAssertTrue(report.contains("Bundle ID: com.cliptext.app"))
+        XCTAssertTrue(report.contains("Accessibility: Missing"))
+        XCTAssertFalse(report.localizedCaseInsensitiveContains("clipboard history"))
+        XCTAssertFalse(report.localizedCaseInsensitiveContains("ocr text"))
+    }
+
     func testPermissionsManagerInitializesWithoutRequestingAccess() {
         let permissions = PermissionsManager()
         XCTAssertNotEqual(permissions.permissionStatus, .checking)
@@ -377,9 +414,41 @@ final class ScreenOCRTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
 
         XCTAssertFalse(selectionController.isVisible)
-        XCTAssertTrue(permissions.didRequest)
-        XCTAssertNotNil(coordinator.statusMessage)
+        XCTAssertFalse(permissions.didRequest)
+        XCTAssertEqual(coordinator.statusMessage, CaptureRecovery.screenRecordingRequired)
+        XCTAssertTrue(coordinator.canRetry)
         XCTAssertTrue(store.items.isEmpty)
+    }
+
+    func testCaptureCoordinatorRetryRecoversAfterPermissionIsGranted() async throws {
+        let store = ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher)
+        let testPasteboard = NSPasteboard.withUniqueName()
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        let screenCapture = MockScreenCaptureService()
+        let ocrService = MockOCRService(textToReturn: "Recovered Text")
+        let selectionController = MockSelectionController()
+        let permissions = MockPermissionsService(hasPermission: false)
+        let coordinator = CaptureCoordinator(
+            store: store,
+            monitor: monitor,
+            permissionsManager: permissions,
+            screenCapture: screenCapture,
+            ocrManager: ocrService,
+            selectionController: selectionController,
+            pasteboard: testPasteboard
+        )
+
+        coordinator.startCapture()
+        XCTAssertTrue(coordinator.canRetry)
+        XCTAssertTrue(store.items.isEmpty)
+
+        permissions.hasScreenRecordingPermission = true
+        coordinator.retryCapture()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(testPasteboard.string(forType: .string), "Recovered Text")
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertFalse(coordinator.canRetry)
     }
 
     func testCaptureCoordinatorFailureShowsHUDAndLeavesStoreIntact() async throws {

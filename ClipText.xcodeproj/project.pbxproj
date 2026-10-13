@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		42C286CD307E49F200A6D18B /* AppHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42C286CC307E49F200A6D18B /* AppHealth.swift */; };
 		A10000000000000000000001 /* ClipTextApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* ClipTextApp.swift */; };
 		A10000000000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AppState.swift */; };
 		A10000000000000000000003 /* ClipboardPanelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* ClipboardPanelController.swift */; };
@@ -49,6 +50,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		42C286CC307E49F200A6D18B /* AppHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppHealth.swift; sourceTree = "<group>"; };
 		A20000000000000000000001 /* ClipTextApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipTextApp.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		A20000000000000000000003 /* ClipboardPanelController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardPanelController.swift; sourceTree = "<group>"; };
@@ -138,6 +140,7 @@
 				A2000000000000000000001D /* PermissionsManager.swift */,
 				A2000000000000000000001E /* CaptureCoordinator.swift */,
 				A20000000000000000000009 /* Assets.xcassets */,
+				42C286CC307E49F200A6D18B /* AppHealth.swift */,
 			);
 			path = ClipText;
 			sourceTree = "<group>";
@@ -275,6 +278,7 @@
 				A10000000000000000000012 /* QuickLookPreview.swift in Sources */,
 				A10000000000000000000013 /* LocalOCRService.swift in Sources */,
 				A10000000000000000000014 /* SecureLocalStorage.swift in Sources */,
+				42C286CD307E49F200A6D18B /* AppHealth.swift in Sources */,
 				A10000000000000000000015 /* Logger.swift in Sources */,
 				A10000000000000000000016 /* OCRModels.swift in Sources */,
 				A10000000000000000000017 /* TextProcessor.swift in Sources */,

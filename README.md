@@ -129,10 +129,10 @@ See [Documentation/ManualAcceptanceChecklist.md](Documentation/ManualAcceptanceC
 
 ## Permissions & First-Launch Security
 
-- **First-Launch Gatekeeper Prompt**: Because locally built development binaries are ad-hoc signed rather than signed with an Apple Developer ID and notarized by Apple, macOS Gatekeeper may display a prompt ("macOS cannot verify the developer") if opened from Finder.
+- **First-Launch Gatekeeper Prompt**: Development builds require the configured Apple Development signing identity. They are not Developer ID signed or notarized, so macOS may display a Gatekeeper prompt if opened from Finder.
   - **Manual Approval Procedure**: Right-click (or Control-click) `ClipText.app` in Finder, choose **Open**, and click **Open** in the confirmation dialog. Alternatively, go to **System Settings > Privacy & Security** and click **Open Anyway** in the Security section.
   - `scripts/install.sh` deliberately preserves Gatekeeper controls and does not remove quarantine attributes.
-- **Screen Recording**: Required for capturing screen regions for Apple Vision OCR. If prompted, grant permission in **System Settings > Privacy & Security > Screen Recording** and relaunch the app.
+- **Screen Recording**: Required for capturing screen regions for Apple Vision OCR. ClipText does not repeatedly prompt automatically; use its explicit Settings action to open **System Settings > Privacy & Security > Screen Recording**, then relaunch the app.
 - **Accessibility**: Optional. Enables automatic caret-anchored panel placement and direct synthetic pasting. ClipText checks this grant without prompting at launch; when unavailable, Settings explains the limitation and opens the Accessibility pane on request.
 - **Local Development Signing vs Public Distribution**: `scripts/build.sh` applies local ad-hoc signing (`codesign -s - --entitlements ...`). **The current build is ad-hoc signed and not notarized.** Public distribution requires an Apple Developer ID Application certificate, Hardened Runtime, and Apple notarization via `notarytool`.
 - See [Documentation/Permissions.md](Documentation/Permissions.md) for full details.

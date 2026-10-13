@@ -23,6 +23,7 @@ final class CaptureCoordinator: ObservableObject {
 
     @Published private(set) var isSelecting: Bool = false
     @Published private(set) var isProcessing: Bool = false
+    @Published private(set) var canRetry: Bool = false
     @Published var statusMessage: String?
 
     init(
@@ -58,16 +59,15 @@ final class CaptureCoordinator: ObservableObject {
     func startCapture() {
         guard !isSelecting && !isProcessing else { return }
 
-        // Check screen recording permission first
+        // Checking access is non-prompting. The user chooses when to open System Settings.
         guard permissionsManager.hasScreenRecordingPermission else {
-            Task { @MainActor in
-                let granted = await permissionsManager.requestScreenRecordingPermission()
-                if !granted {
-                    statusMessage = "Screen Recording permission required. Enable in System Settings and relaunch ClipText."
-                }
-            }
+            statusMessage = CaptureRecovery.screenRecordingRequired
+            canRetry = true
             return
         }
+
+        statusMessage = "Select a screen region to recognize."
+        canRetry = false
 
         let previousApp = NSWorkspace.shared.frontmostApplication
         isSelecting = true
@@ -83,9 +83,14 @@ final class CaptureCoordinator: ObservableObject {
             onCancel: { [weak self] in
                 guard let self else { return }
                 self.isSelecting = false
+                self.statusMessage = "Screen OCR cancelled."
                 previousApp?.activate()
             }
         )
+    }
+
+    func retryCapture() {
+        startCapture()
     }
 
     private func processCapture(rect: CGRect, on screen: NSScreen?, previousApp: NSRunningApplication?) async {
@@ -112,6 +117,8 @@ final class CaptureCoordinator: ObservableObject {
                 )
             ]
         } else {
+            statusMessage = CaptureRecovery.noDisplayAvailable
+            canRetry = true
             previousApp?.activate()
             return
         }
@@ -125,6 +132,7 @@ final class CaptureCoordinator: ObservableObject {
         let targetScreen = screen ?? NSScreen.screens.first(where: { $0.displayID == targetDisplay.displayID }) ?? NSScreen.main
 
         isProcessing = true
+        statusMessage = "Capturing selected region…"
         defer {
             isProcessing = false
             previousApp?.activate()
@@ -137,6 +145,7 @@ final class CaptureCoordinator: ObservableObject {
             }
 
             // 2. Perform Apple Vision OCR
+            statusMessage = "Recognizing text…"
             let configuration = OCRConfiguration.accurate
             let result = try await withTimeout(60) { [ocrManager, image] in
                 try await ocrManager.recognizeText(from: image, configuration: configuration)
@@ -144,6 +153,8 @@ final class CaptureCoordinator: ObservableObject {
 
             let recognizedText = result.text.trimmingWhitespaceAndNewlines()
             guard !recognizedText.isEmpty else {
+                statusMessage = CaptureRecovery.noTextFound
+                canRetry = true
                 selectionController.showStatus("No text found", on: targetScreen)
                 return
             }
@@ -173,9 +184,13 @@ final class CaptureCoordinator: ObservableObject {
             store?.ingest(snapshot, sourceApplication: sourceApp)
 
             // 4. Show success indicator HUD pill
+            canRetry = false
+            statusMessage = "Copied \(recognizedText.count) characters to clipboard and history."
             selectionController.showStatus("Copied", on: targetScreen)
         } catch {
             Logger.shared.error("Screen OCR failed: \(error.localizedDescription)")
+            statusMessage = CaptureRecovery.recognitionFailed
+            canRetry = true
             selectionController.showStatus("OCR Failed", on: targetScreen)
         }
     }

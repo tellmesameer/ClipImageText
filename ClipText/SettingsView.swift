@@ -399,10 +399,71 @@ struct SettingsView: View {
                     }
                 }
 
+                settingsSection("Installation Health") {
+                    settingsCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Label(
+                                    appState.installationHealth.isStableForPrivacyPermissions
+                                        ? "Stable signing identity"
+                                        : "Signing identity needs attention",
+                                    systemImage: appState.installationHealth.isStableForPrivacyPermissions
+                                        ? "checkmark.shield.fill"
+                                        : "exclamationmark.shield.fill"
+                                )
+                                Spacer()
+                                Button("Refresh") {
+                                    appState.refreshInstallationHealth()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+
+                            Group {
+                                Text("Bundle ID: \(appState.installationHealth.bundleIdentifier)")
+                                Text("App path: \(appState.installationHealth.applicationPath)")
+                                Text("Signing: \(appState.installationHealth.signingSummary)")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+
+                            if appState.installationHealth.duplicateInstallations.isEmpty {
+                                Text("No second ClipText installation was found.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Another installation was found: \(appState.installationHealth.duplicateInstallations.joined(separator: ", ")). Launch one location consistently so macOS can match its privacy grants.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            Button("Copy Redacted Diagnostics") {
+                                appState.copyDiagnostics()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityHint("Copies app, permission, shortcut, and signing metadata without clipboard history or OCR text.")
+                        }
+                    }
+                }
+
                 if let statusMessage = appState.statusMessage {
-                    Text(statusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("ClipText status: \(statusMessage)")
+
+                        if appState.canRetryScreenOCR {
+                            Button("Try Screen OCR Again") {
+                                appState.retryScreenOCR()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
                 }
             }
             .padding(22)

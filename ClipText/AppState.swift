@@ -253,6 +253,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isCapturingScreenshot = false
     @Published private(set) var isRecordingGIF = false
     @Published var statusMessage: String?
+    @Published private(set) var installationHealth = InstallationHealth.current()
 
     let store: ClipboardStore
     let snippetStore: SnippetStore
@@ -390,6 +391,7 @@ final class AppState: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
         refreshAvailableApplications()
+        refreshInstallationHealth()
         monitor.ignoredBundleIdentifiers = ignoredBundleIdentifiers
         monitor.start()
         oldHotKey = hotKey
@@ -995,11 +997,54 @@ final class AppState: ObservableObject {
         }
     }
 
+    var canRetryScreenOCR: Bool {
+        captureCoordinator.canRetry
+    }
+
     func startScreenOCR() {
+        guard permissionsManager.hasScreenRecordingPermission else {
+            statusMessage = CaptureRecovery.screenRecordingRequired
+            return
+        }
         panelController.close()
         annotationEditorController.close()
         settingsWindow?.orderOut(nil)
         captureCoordinator.startCapture()
+    }
+
+    func retryScreenOCR() {
+        panelController.close()
+        captureCoordinator.retryCapture()
+    }
+
+    func refreshInstallationHealth() {
+        installationHealth = InstallationHealth.current()
+    }
+
+    func copyDiagnostics() {
+        refreshInstallationHealth()
+        let bundle = Bundle.main
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+        let report = DiagnosticsReport.make(
+            version: version,
+            build: build,
+            health: installationHealth,
+            hasScreenRecordingPermission: permissionsManager.hasScreenRecordingPermission,
+            isAccessibilityTrusted: isAccessibilityTrusted,
+            historyHotKey: hotKey.displayString,
+            ocrHotKey: ocrHotKey.displayString
+        )
+        let snapshot = ClipboardSnapshot(text: report, richTextData: nil, imageData: nil, imageType: nil, fileURLs: [])
+        let pasteboard = NSPasteboard.general
+        monitor.suppressFingerprint(snapshot.fingerprint)
+        pasteboard.clearContents()
+        guard pasteboard.setString(report, forType: .string) else {
+            statusMessage = "Diagnostics could not be copied."
+            return
+        }
+        monitor.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
+        statusMessage = "Redacted diagnostics copied to the clipboard."
     }
 
     func openScreenRecordingSettings() {

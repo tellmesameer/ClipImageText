@@ -13,7 +13,7 @@ To provide global keyboard shortcuts, screen-region selection, and on-device OCR
 ### A. Screen Recording (`NSScreenCaptureUsageDescription`)
 - **Purpose**: Enables ScreenCaptureKit to capture the user-selected rectangle on any connected display for local Apple Vision text recognition.
 - **System Location**: **System Settings > Privacy & Security > Screen Recording**.
-- **User Prompt**: macOS presents a system prompt on first screen capture attempt.
+- **Guidance Flow**: ClipText checks this access without prompting automatically. If it is missing, the menu and Settings provide an explicit link to the Screen Recording pane; after granting access, relaunch ClipText.
 - **Relaunch Requirement**: When granted in macOS System Settings, macOS requires terminating and reopening the application before ScreenCaptureKit receives capture buffers. ClipText detects this state and provides a direct "Relaunch ClipText" button in Settings.
 - **Denial Behavior**: If permission is denied, ClipText cancels the selection cleanly without disturbing the user's existing clipboard or stored history, and presents a non-intrusive status HUD.
 
@@ -21,6 +21,7 @@ To provide global keyboard shortcuts, screen-region selection, and on-device OCR
 - **Purpose**: Allows ClipText to position the clipboard history panel directly under the active text insertion caret, and paste restored items directly into the frontmost application.
 - **System Location**: **System Settings > Privacy & Security > Accessibility**.
 - **Optional**: If Accessibility access is not granted, ClipText remains fully functional; the panel positions at the center of the active display, and selecting an item copies it to `NSPasteboard` without synthesizing keyboard events.
+- **Guidance Flow**: ClipText never repeatedly triggers the Accessibility authorization prompt. It reports the degraded behavior and opens the Accessibility pane only when the person chooses that action.
 
 ---
 
