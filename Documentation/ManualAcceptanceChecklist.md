@@ -24,6 +24,7 @@ Complete every item before creating a GitHub Release.
 ## 1. Screen-Region OCR (`⌥⇧T`)
 
 ### 1. Screen Recording permission behavior
+- [ ] (Optional clean slate): Run `./scripts/uninstall.sh` to remove prior installs and reset macOS permissions to a clean, unprompted state
 - [ ] Open a different application (e.g., Safari, Notes, or Terminal) so ClipText is **not** the frontmost app
 - [ ] Press `⌥⇧T` (Option + Shift + T)
 - [ ] macOS should present the Screen Recording permission prompt if not yet granted
@@ -31,6 +32,8 @@ Complete every item before creating a GitHub Release.
 - [ ] Grant permission in **System Settings > Privacy & Security > Screen Recording**
 - [ ] Quit and relaunch ClipText (macOS requires restart after granting Screen Recording)
 - [ ] Confirm ClipText's Settings view no longer shows a "Relaunch" warning for Screen Recording
+- [ ] Rebuild and re-install ClipText using `./scripts/build.sh` and `./scripts/install.sh --system`
+- [ ] Confirm that Screen Recording permissions persist without repeating the macOS permission prompt (stable Designated Requirement)
 
 ### 2. OCR on the primary display
 - [ ] Switch to an application with visible text on the primary display

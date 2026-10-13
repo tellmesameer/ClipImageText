@@ -53,9 +53,14 @@ if [[ ! -d "${SOURCE_APP}" ]]; then
 fi
 
 # Strict path validation
-TARGET_DIR="$(cd "${TARGET_DIR%/*}" 2>/dev/null && pwd)/$(basename "${TARGET_DIR}")" || TARGET_DIR="${TARGET_DIR}"
-if [[ "${TARGET_DIR}" != "/Applications" && "${TARGET_DIR}" != "${HOME}/Applications" ]]; then
-  # If custom directory passed, ensure it is absolute and not root or dangerous
+if [[ "${TARGET_DIR}" == "/Applications" ]]; then
+  TARGET_DIR="/Applications"
+elif [[ "${TARGET_DIR}" == "${HOME}/Applications" ]]; then
+  TARGET_DIR="${HOME}/Applications"
+else
+  PARENT_DIR="${TARGET_DIR%/*}"
+  [[ -z "${PARENT_DIR}" ]] && PARENT_DIR="/"
+  TARGET_DIR="$(cd "${PARENT_DIR}" 2>/dev/null && pwd)/$(basename "${TARGET_DIR}")"
   if [[ "${TARGET_DIR}" == "/" || "${TARGET_DIR}" == "${HOME}" || "${TARGET_DIR}" == *"/Library"* ]]; then
     echo "Error: Refusing to install into dangerous path: ${TARGET_DIR}" >&2
     exit 1
@@ -96,8 +101,19 @@ cp -R "${SOURCE_APP}" "${DEST_APP}"
 echo "==> Verifying signature of installed bundle..."
 codesign -v --deep --strict "${DEST_APP}"
 
+SIGNING_INFO=$(codesign -dvvv "${DEST_APP}" 2>&1)
+AUTHORITY=$(echo "${SIGNING_INFO}" | grep "Authority=" | head -n 1 | cut -d= -f2 || true)
+TEAM_ID=$(echo "${SIGNING_INFO}" | grep "TeamIdentifier=" | head -n 1 | cut -d= -f2 || true)
+DESIGNATED_REQ=$(codesign -dr - "${DEST_APP}" 2>&1 | tail -n 1)
+
 echo "==> Successfully installed ClipText at: ${DEST_APP}"
 echo "    Note: User history in ~/Library/Application Support and Keychain data were preserved."
+if [[ -n "${AUTHORITY}" ]]; then
+  echo "    Signing Authority: ${AUTHORITY}"
+  echo "    Team Identifier:   ${TEAM_ID}"
+  echo "    Designated Req:    ${DESIGNATED_REQ}"
+  echo "    Note: A one-time Screen Recording permission grant may be required in System Settings after changing the signing identity from ad-hoc to Apple Development."
+fi
 
 if [[ "${AUTO_RESTART}" -eq 1 ]]; then
   echo "==> Launching installed ClipText..."

@@ -64,6 +64,28 @@ Performs comprehensive bundle integrity, Info.plist, code signature, entitlement
 ```
 Output: `build/ClipText-1.0.zip`
 
+### 5. Safe Uninstall & Permission Reset
+Safely uninstalls ClipText, unregisters it from LaunchServices, resets macOS TCC permissions, and optionally cleans data and Keychain keys:
+```bash
+# Safe uninstall and permission reset while preserving history and encryption keys
+./scripts/uninstall.sh --keep-data
+
+# Preview all actions without modifying files or system state
+./scripts/uninstall.sh --dry-run
+
+# Complete uninstallation with full data and Keychain key destruction (requires confirmation)
+./scripts/uninstall.sh
+
+# Non-interactive complete uninstallation (skips confirmation prompt)
+./scripts/uninstall.sh --force
+```
+
+Run safety test suite:
+```bash
+./scripts/test_uninstall.sh
+```
+
+
 ---
 
 ## Running Automated Tests

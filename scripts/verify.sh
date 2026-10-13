@@ -65,7 +65,13 @@ echo "[3/5] Validating code signature..."
 codesign -v --deep --strict "${APP_PATH}"
 SIGNING_INFO=$(codesign -dvvv "${APP_PATH}" 2>&1)
 echo "${SIGNING_INFO}" | grep -E "Authority|Signature=|TeamIdentifier" || true
-echo "  ✓ Local code signature is valid and strict check passed (ad-hoc/development; NOT Developer ID signed or notarized)."
+DESIGNATED_REQ=$(codesign -dr - "${APP_PATH}" 2>&1 | tail -n 1)
+echo "  Designated Requirement: ${DESIGNATED_REQ}"
+if echo "${SIGNING_INFO}" | grep -q "Authority=Apple Development"; then
+  echo "  ✓ Stable Apple Development signature verified (TeamIdentifier present, DR certificate-bound)."
+else
+  echo "  ✓ Local code signature is valid and strict check passed (ad-hoc/development; NOT Developer ID signed or notarized)."
+fi
 
 # 4. Entitlements Verification
 echo "[4/5] Inspecting embedded entitlements..."

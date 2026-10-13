@@ -48,13 +48,29 @@ ClipText uses the following entitlements defined in `ClipText/ClipText.entitleme
 
 ## 3. Code Signing Architecture
 
-### Local Development Signing (Ad-hoc)
-For local development, builds, and automated testing, ClipText is signed using ad-hoc signing (`-s -`) with embedded entitlements:
+### Local Development Signing (Apple Development)
+For local development builds, ClipText uses a stable Apple Development identity rather than ephemeral ad-hoc signatures. This binds the application's Designated Requirement (DR) to the developer's certificate identity and TeamIdentifier:
+
 ```bash
-codesign --force --deep --sign - --entitlements ClipText/ClipText.entitlements build/Release/ClipText.app
+# Auto-detects valid Apple Development identity in Keychain
+./scripts/build.sh
+
+# Or with an explicit identity override:
+CLIPTEXT_SIGNING_IDENTITY="Apple Development: sameer355u@gmail.com (9325V822RQ)" ./scripts/build.sh
 ```
 
-> **Important Note on Rebuilding**: macOS TCC (Transparency, Consent, and Control) tracks permissions by code signature identity (CDHash / designated requirement). Rebuilding with ad-hoc signing generates a new CDHash. If macOS prompts for Screen Recording access again after a rebuild, remove the prior entry from **System Settings > Privacy & Security > Screen Recording** and grant it for the newly built binary.
+**Benefits for Development**:
+- macOS TCC (Screen Recording permission) tracks applications by Designated Requirement. With a certificate-backed signature, the DR is bound to the developer certificate and Team ID rather than the binary's CDHash.
+- Screen Recording permissions **persist across rebuilds**, eliminating repetitive TCC prompts during local development.
+
+> **One-Time Migration Grant**: When migrating from an ad-hoc signed build to an Apple Development signed build, macOS requires granting Screen Recording permission once in **System Settings > Privacy & Security > Screen Recording**, because the Designated Requirement changes from CDHash-based to certificate-based. Subsequent rebuilds with the same certificate retain the grant automatically.
+
+### CI & Contributor Fallback (Ad-hoc)
+On CI runners (e.g. GitHub Actions) or environments where no Apple Development certificate is present in the Keychain, `./scripts/build.sh` automatically falls back to ad-hoc signing (`-s -`):
+```bash
+CLIPTEXT_SIGNING_IDENTITY="-" ./scripts/build.sh
+```
+This ensures CI workflows and external contributors without Apple Developer accounts can build, test, and package ClipText without configuration changes or failed builds.
 
 ### Distribution Signing & Notarization (Developer ID)
 For ordinary public distribution outside the local machine:
@@ -89,3 +105,29 @@ When launching a locally built development bundle for the first time without Dev
 4. Alternatively, open **System Settings > Privacy & Security**, scroll down to the **Security** section, and click **Open Anyway**.
 
 *Note: ClipText's installation scripts never strip quarantine attributes (`xattr -d com.apple.quarantine`) automatically, ensuring that all macOS user-consent and security controls remain fully intact.*
+
+---
+
+## 5. Resetting Permissions & Safe Uninstallation
+
+To test the first-run permission onboarding experience or remove ClipText, run the uninstall script:
+
+```bash
+# Recommended for permission reset (preserves history and Keychain keys):
+./scripts/uninstall.sh --keep-data
+
+# Preview prospective changes safely:
+./scripts/uninstall.sh --dry-run
+
+# Complete uninstallation with full data wipe (prompts for confirmation):
+./scripts/uninstall.sh
+```
+
+This script:
+1. Safely terminates active `ClipText` processes.
+2. Validates target bundles strictly (rejects symlinks, non-.app paths, and mismatched `CFBundleIdentifier`).
+3. Unregisters installed app bundles from the macOS LaunchServices database.
+4. Removes verified `ClipText.app` bundles.
+5. Resets macOS TCC permissions (`ScreenCapture` and `Accessibility`) using `tccutil reset`.
+6. Cleans application caches and saved application state.
+7. Manages clipboard history and the Keychain AES-GCM encryption key (`service: com.kelsiito.clipboard.local-storage`, `account: aes-gcm-key-v1`), preserving them when `--keep-data` is specified and requiring explicit confirmation before permanent deletion.
