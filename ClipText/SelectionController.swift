@@ -25,6 +25,7 @@ protocol SelectionController: AnyObject {
 @MainActor
 final class DefaultSelectionController: SelectionController {
     private let windowManager: SelectionWindowManager
+    private let screenProvider: () -> [NSScreen]
 
     @Published private(set) var isVisible: Bool = false
     @Published private(set) var selectedRect: CGRect = .zero
@@ -35,8 +36,12 @@ final class DefaultSelectionController: SelectionController {
     private var statusWindow: NSPanel?
     private var statusDismissTask: Task<Void, Never>?
 
-    init(windowManager: SelectionWindowManager) {
+    init(
+        windowManager: SelectionWindowManager,
+        screenProvider: @escaping () -> [NSScreen] = { NSScreen.screens }
+    ) {
         self.windowManager = windowManager
+        self.screenProvider = screenProvider
     }
 
     static func makeDefault() -> DefaultSelectionController {
@@ -48,21 +53,21 @@ final class DefaultSelectionController: SelectionController {
         self.onComplete = onComplete
         self.onCancel = onCancel
 
-        let cursorLocation = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(cursorLocation) })
-                ?? NSScreen.main ?? NSScreen.screens.first else {
+        let screens = screenProvider()
+        guard !screens.isEmpty else {
             onCancel()
             return
         }
 
-        currentScreen = screen
+        let cursorLocation = NSEvent.mouseLocation
+        currentScreen = screens.first(where: { $0.frame.contains(cursorLocation) })
+            ?? NSScreen.main ?? screens.first
         isVisible = true
 
-        windowManager.showOverlay(
-            on: screen,
-            content: SelectionOverlayView(),
-            onSelectionComplete: { [weak self] rect in
-                self?.handleSelectionComplete(rect)
+        windowManager.showOverlays(
+            on: screens,
+            onSelectionComplete: { [weak self] rect, screen in
+                self?.handleSelectionComplete(rect, on: screen)
             },
             onCancel: { [weak self] in
                 self?.handleCancel()
@@ -74,19 +79,19 @@ final class DefaultSelectionController: SelectionController {
         handleCancel()
     }
 
-    private func handleSelectionComplete(_ rect: CGRect) {
+    private func handleSelectionComplete(_ rect: CGRect, on screen: NSScreen?) {
         guard rect.width > 10 && rect.height > 10 else {
             handleCancel()
             return
         }
 
-        let screenRect = convertToScreenCoordinates(rect)
-        selectedRect = screenRect
+        selectedRect = rect
+        currentScreen = screen
         isVisible = false
         windowManager.hideOverlay()
         let completion = onComplete
         cleanup()
-        completion?(screenRect, currentScreen)
+        completion?(rect, screen)
     }
 
     private func handleCancel() {
@@ -97,17 +102,6 @@ final class DefaultSelectionController: SelectionController {
         cancellation?()
     }
 
-    private func convertToScreenCoordinates(_ rect: CGRect) -> CGRect {
-        guard let screen = currentScreen else { return rect }
-
-        let screenFrame = screen.frame
-        return CGRect(
-            x: screenFrame.origin.x + rect.origin.x,
-            y: screenFrame.origin.y + screenFrame.height - rect.origin.y - rect.height,
-            width: rect.width,
-            height: rect.height
-        )
-    }
 
     private func cleanup() {
         onComplete = nil

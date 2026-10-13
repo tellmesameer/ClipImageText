@@ -17,6 +17,7 @@ final class CaptureCoordinator: ObservableObject {
     private let selectionController: SelectionController
     private let permissionsManager: PermissionsService
     private let pasteboard: NSPasteboard
+    private let displayProvider: () -> [DisplayInfo]
     private weak var store: ClipboardStore?
     private weak var monitor: PasteboardMonitor?
 
@@ -31,7 +32,8 @@ final class CaptureCoordinator: ObservableObject {
         screenCapture: ScreenCaptureService? = nil,
         ocrManager: OCRService? = nil,
         selectionController: SelectionController? = nil,
-        pasteboard: NSPasteboard = .general
+        pasteboard: NSPasteboard = .general,
+        displayProvider: (() -> [DisplayInfo])? = nil
     ) {
         self.store = store
         self.monitor = monitor
@@ -40,6 +42,17 @@ final class CaptureCoordinator: ObservableObject {
         self.ocrManager = ocrManager ?? OCRManager()
         self.selectionController = selectionController ?? DefaultSelectionController.makeDefault()
         self.pasteboard = pasteboard
+        self.displayProvider = displayProvider ?? {
+            NSScreen.screens.compactMap { screen in
+                guard let displayID = screen.displayID else { return nil }
+                return DisplayInfo(
+                    displayID: displayID,
+                    frame: screen.frame,
+                    backingScaleFactor: screen.backingScaleFactor,
+                    localizedName: screen.localizedName
+                )
+            }
+        }
     }
 
     func startCapture() {
@@ -76,18 +89,40 @@ final class CaptureCoordinator: ObservableObject {
     }
 
     private func processCapture(rect: CGRect, on screen: NSScreen?, previousApp: NSRunningApplication?) async {
-        let targetScreen = screen ?? NSScreen.main ?? NSScreen.screens.first
-        guard let targetScreen, let displayID = targetScreen.displayID else {
+        let displays = displayProvider()
+        let availableDisplays: [DisplayInfo]
+        if !displays.isEmpty {
+            availableDisplays = displays
+        } else if let screen, let displayID = screen.displayID {
+            availableDisplays = [
+                DisplayInfo(
+                    displayID: displayID,
+                    frame: screen.frame,
+                    backingScaleFactor: screen.backingScaleFactor,
+                    localizedName: screen.localizedName
+                )
+            ]
+        } else if let main = NSScreen.main, let displayID = main.displayID {
+            availableDisplays = [
+                DisplayInfo(
+                    displayID: displayID,
+                    frame: main.frame,
+                    backingScaleFactor: main.backingScaleFactor,
+                    localizedName: main.localizedName
+                )
+            ]
+        } else {
             previousApp?.activate()
             return
         }
 
-        let displayInfo = DisplayInfo(
-            displayID: displayID,
-            frame: targetScreen.frame,
-            backingScaleFactor: targetScreen.backingScaleFactor,
-            localizedName: targetScreen.localizedName
-        )
+        let intersecting = availableDisplays.filter { display in
+            let intersection = rect.intersection(display.frame)
+            return !intersection.isNull && intersection.width > 2 && intersection.height > 2
+        }
+        let displaysToCapture = intersecting.isEmpty ? availableDisplays : intersecting
+        let targetDisplay = ScreenCoordinateConverter.targetDisplay(for: rect, in: displaysToCapture) ?? displaysToCapture[0]
+        let targetScreen = screen ?? NSScreen.screens.first(where: { $0.displayID == targetDisplay.displayID }) ?? NSScreen.main
 
         isProcessing = true
         defer {
@@ -96,9 +131,9 @@ final class CaptureCoordinator: ObservableObject {
         }
 
         do {
-            // 1. Capture selected screen region
+            // 1. Capture selected screen region (multi-display aware)
             let image = try await withTimeout(15) { [screenCapture] in
-                try await screenCapture.capture(display: displayInfo, region: rect)
+                try await screenCapture.capture(displays: displaysToCapture, region: rect)
             }
 
             // 2. Perform Apple Vision OCR

@@ -23,42 +23,62 @@ Complete every item before creating a GitHub Release.
 
 ## 1. Screen-Region OCR (`⌥⇧T`)
 
-### First-time Screen Recording permission
-
+### 1. Screen Recording permission behavior
 - [ ] Open a different application (e.g., Safari, Notes, or Terminal) so ClipText is **not** the frontmost app
 - [ ] Press `⌥⇧T` (Option + Shift + T)
-- [ ] macOS should present the Screen Recording permission prompt
+- [ ] macOS should present the Screen Recording permission prompt if not yet granted
+- [ ] If permission is denied or missing, verify ClipText shows clear guidance and does not crash or leave broken overlays
 - [ ] Grant permission in **System Settings > Privacy & Security > Screen Recording**
-- [ ] Quit and relaunch ClipText (macOS requires this after granting Screen Recording)
+- [ ] Quit and relaunch ClipText (macOS requires restart after granting Screen Recording)
 - [ ] Confirm ClipText's Settings view no longer shows a "Relaunch" warning for Screen Recording
 
-### Subsequent OCR use
+### 2. OCR on the primary display
+- [ ] Switch to an application with visible text on the primary display
+- [ ] Press `⌥⇧T` — verify transparent overlays appear seamlessly across all displays
+- [ ] Draw a selection rectangle on the primary display around text
+- [ ] Release the mouse — verify brief success feedback HUD appears on the primary screen
+- [ ] Paste (`⌘V`) — verify the recognized text matches the selected text
+- [ ] Open clipboard history (`⌘⇧V`) — verify the item appears exactly once
 
-- [ ] Switch to an application with visible text (e.g., a webpage or PDF)
-- [ ] Press `⌥⇧T`
-- [ ] A selection overlay should appear across the full screen
-- [ ] Draw a rectangle around a block of text
-- [ ] Release the mouse — a brief success feedback HUD should appear
-- [ ] Paste (`⌘V`) into any text field — the extracted text should be present
-- [ ] Open clipboard history (`⌘⇧V`) — the OCR text should appear **exactly once**
+### 3. OCR on each secondary display
+- [ ] With one or more external displays connected, switch to text on a secondary display
+- [ ] Press `⌥⇧T` — verify the selection overlay responds smoothly to mouse events on the secondary display
+- [ ] Draw a selection rectangle exclusively on the secondary display
+- [ ] Release the mouse — verify the status HUD appears on that display and recognized text is copied
+- [ ] Verify extracted text matches without clipping or coordinate misalignment
 
-### Multi-display selection
+### 4. Selection on displays arranged left or above the primary display
+- [ ] In **System Settings > Displays > Arrange**, position a secondary display to the left of the primary display (negative X coordinate origin)
+- [ ] Press `⌥⇧T` and select text on the left display
+- [ ] Verify coordinates are correctly mapped to local display space and text is accurately extracted
+- [ ] Rearrange a display above the primary display (positive Y offset)
+- [ ] Press `⌥⇧T` and select text on the top display; verify capture and OCR succeed without vertical offset errors
 
-- [ ] If an external display is connected, press `⌥⇧T` and drag a selection on the **external** display
-- [ ] Verify text is extracted correctly from the external display
-- [ ] Verify Retina / non-Retina scaling does not distort the capture region
+### 5. Accurate OCR from Retina-scaled displays
+- [ ] Test OCR on a Retina display (2x scale, e.g., MacBook built-in liquid retina)
+- [ ] Test OCR on a standard (1x scale) external monitor
+- [ ] Test a setup with mixed scales (built-in Retina 2x + external 1x)
+- [ ] Verify that captured images preserve full native pixel resolution and do not blur or crop text
+- [ ] Verify selections crossing the boundary between 1x and 2x displays stitch cleanly and yield readable text
 
-### Cancellation
+### 6. Escape cancellation and cleanup
+- [ ] Press `⌥⇧T` to show multi-display overlays
+- [ ] Press `Esc` before dragging or mid-drag
+- [ ] Verify that **all** overlay windows on **all** connected displays immediately disappear
+- [ ] Verify pre-existing clipboard contents are completely unchanged
+- [ ] Verify no blank or partial entry is written to clipboard history
 
-- [ ] Press `⌥⇧T`, then press `Esc` before releasing the mouse
-- [ ] Verify nothing is copied — the previous clipboard content is preserved
-- [ ] Verify no new entry appears in clipboard history
+### 7. Repeated selections and lingering overlay prevention
+- [ ] Perform 5 consecutive captures in rapid succession (`⌥⇧T`, select text, release)
+- [ ] Verify that after each capture, overlay windows are fully dismissed without lingering invisible hit-test traps
+- [ ] Verify clicks pass normally through to background applications between captures
+- [ ] Verify that duplicate captures of identical text move the existing entry to top without duplicating entries in history
+- [ ] Test display disconnection or resolution change while overlay is active: verify overlays safely dismiss without crashing (screen reconfiguration observer)
 
-### Empty result
-
-- [ ] Press `⌥⇧T` and select a region with no text (e.g., a solid background)
+### 8. Empty result
+- [ ] Press `⌥⇧T` and select a region with no text (e.g., a solid blank background)
 - [ ] Verify the clipboard is not modified
-- [ ] Verify a non-intrusive "No text found" HUD appears
+- [ ] Verify a non-intrusive "No text found" HUD appears and overlays are dismissed
 
 ---
 
@@ -72,6 +92,15 @@ Complete every item before creating a GitHub Release.
 - [ ] Type a search query — results should filter to matching items
 - [ ] Use arrow keys to navigate and press `Enter` to select an item
 - [ ] Paste (`⌘V`) — the selected historical item should be pasted
+
+### Draggable header and custom position persistence
+
+- [ ] Click and drag anywhere in the history panel header area (title, search bar background, top bar)
+- [ ] Verify the panel moves smoothly with the mouse drag
+- [ ] Release the panel in a custom location on screen
+- [ ] Dismiss the panel (`Esc` or click outside) and reopen with `⌘⇧V`
+- [ ] Verify the panel reopens at the saved custom position
+- [ ] In Settings, verify "Reset Position" restores automatic placement behavior
 
 ### Deduplication
 
