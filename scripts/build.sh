@@ -11,38 +11,29 @@ APP_NAME="ClipText.app"
 ENTITLEMENTS="${REPO_ROOT}/ClipText/ClipText.entitlements"
 
 # 1. Determine code signing identity:
-#    - CLIPTEXT_SIGNING_IDENTITY: explicit environment override (e.g. "Apple Development: ...", or "-" for ad-hoc).
-#    - Auto-discovery: search Keychain for a valid Apple Development or Apple Developer identity.
-#    - Fallback: "-" (ad-hoc signing) for CI runners or machines without signing certificates.
+#    - CLIPTEXT_SIGNING_IDENTITY: explicit Apple Development identity for Team B6537Y9X84.
+#    - Auto-discovery: search Keychain for that team's Apple Development identity.
+#    - No ad-hoc fallback: changing to an ad-hoc designated requirement loses TCC grants.
 SIGNING_IDENTITY=""
-SIGNING_TYPE=""
+EXPECTED_TEAM_ID="B6537Y9X84"
 
 if [[ -n "${CLIPTEXT_SIGNING_IDENTITY:-}" ]]; then
   SIGNING_IDENTITY="${CLIPTEXT_SIGNING_IDENTITY}"
-  if [[ "${SIGNING_IDENTITY}" == "-" ]]; then
-    SIGNING_TYPE="ad-hoc (override)"
-  else
-    SIGNING_TYPE="explicit override"
+  if [[ "${SIGNING_IDENTITY}" == "-" || "${SIGNING_IDENTITY}" != Apple\ Development:* || "${SIGNING_IDENTITY}" != *"(${EXPECTED_TEAM_ID})"* ]]; then
+    echo "Error: CLIPTEXT_SIGNING_IDENTITY must be an Apple Development identity for team ${EXPECTED_TEAM_ID}." >&2
+    exit 1
   fi
-  echo "==> Using signing identity from CLIPTEXT_SIGNING_IDENTITY: ${SIGNING_IDENTITY} (${SIGNING_TYPE})"
+  echo "==> Using signing identity from CLIPTEXT_SIGNING_IDENTITY: ${SIGNING_IDENTITY}"
 else
-  DETECTED_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep -E 'Apple Development:|Apple Developer:' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+  DETECTED_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Apple Development:.*(${EXPECTED_TEAM_ID})" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
   if [[ -n "${DETECTED_IDENTITY}" ]]; then
     SIGNING_IDENTITY="${DETECTED_IDENTITY}"
-    SIGNING_TYPE="auto-detected Apple Development"
     echo "==> Discovered local signing identity: ${SIGNING_IDENTITY}"
   else
-    SIGNING_IDENTITY="-"
-    SIGNING_TYPE="ad-hoc fallback (no cert found)"
-    echo "==> No Apple Development identity found in keychain; falling back to ad-hoc signing (-)"
+    echo "Error: No Apple Development identity for team ${EXPECTED_TEAM_ID} is installed." >&2
+    echo "Install the intended development certificate, then rerun this script." >&2
+    exit 1
   fi
-fi
-
-if [[ "${SIGNING_IDENTITY}" == "-" ]]; then
-  XCODE_CODE_SIGN_IDENTITY="-"
-else
-  # Xcode automatic signing requires the generic type "Apple Development"
-  XCODE_CODE_SIGN_IDENTITY="Apple Development"
 fi
 
 echo "==> Building ClipText (Release)..."
@@ -55,7 +46,7 @@ xcodebuild \
   -destination 'platform=macOS' \
   -derivedDataPath "${DERIVED_DATA_DIR}" \
   CODE_SIGNING_ALLOWED=YES \
-  CODE_SIGN_IDENTITY="${XCODE_CODE_SIGN_IDENTITY}" \
+  CODE_SIGN_IDENTITY="${SIGNING_IDENTITY}" \
   build
 
 BUILT_APP="${DERIVED_DATA_DIR}/Build/Products/Release/${APP_NAME}"
@@ -73,13 +64,8 @@ rm -rf "${RELEASE_DIR}"
 mkdir -p "${RELEASE_DIR}"
 cp -R "${BUILT_APP}" "${RELEASE_DIR}/${APP_NAME}"
 
-if [[ "${SIGNING_IDENTITY}" != "-" ]]; then
-  echo "==> Applying stable Apple Development code signature with entitlements..."
-  codesign --force --deep --sign "${SIGNING_IDENTITY}" --entitlements "${ENTITLEMENTS}" --timestamp=none "${RELEASE_DIR}/${APP_NAME}"
-else
-  echo "==> Applying ad-hoc code signature with entitlements..."
-  codesign --force --deep --sign - --entitlements "${ENTITLEMENTS}" "${RELEASE_DIR}/${APP_NAME}"
-fi
+# Preserve Xcode's certificate-based signature. Re-signing the copied bundle risks
+# changing the designated requirement and invalidating existing TCC authorization.
 
 echo "==> Verifying local signature..."
 codesign -v --deep --strict "${RELEASE_DIR}/${APP_NAME}"
@@ -90,11 +76,12 @@ TEAM_ID=$(echo "${SIGNING_INFO}" | grep "TeamIdentifier=" | head -n 1 | cut -d= 
 DESIGNATED_REQ=$(codesign -dr - "${RELEASE_DIR}/${APP_NAME}" 2>&1 | tail -n 1)
 
 echo "==> Successfully built and packaged local bundle at: ${RELEASE_DIR}/${APP_NAME}"
-if [[ -n "${AUTHORITY}" ]]; then
+if [[ "${TEAM_ID}" == "${EXPECTED_TEAM_ID}" ]] && echo "${AUTHORITY}" | grep -q '^Apple Development'; then
   echo "    Signing Authority: ${AUTHORITY}"
   echo "    Team Identifier:   ${TEAM_ID}"
   echo "    Designated Req:    ${DESIGNATED_REQ}"
   echo "    Note: App is signed with a stable Apple Development identity. TCC permissions will persist across rebuilds."
 else
-  echo "    Note: App is signed locally (ad-hoc). It is NOT Developer ID signed or notarized."
+  echo "Error: Built app does not have the expected Apple Development signature for team ${EXPECTED_TEAM_ID}." >&2
+  exit 1
 fi

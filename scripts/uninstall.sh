@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # scripts/uninstall.sh: Safely uninstalls ClipText, unregisters LaunchServices,
-# resets system permissions (TCC), cleans caches, and optionally manages
+# preserves macOS privacy permissions by default, cleans caches, and optionally manages
 # preferences and Keychain-backed encryption keys.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,20 +17,24 @@ DRY_RUN=0
 KEEP_DATA=0
 FORCE=0
 CLEAN_BUILD=0
+RESET_PERMISSIONS=0
 CUSTOM_APP_PATH=""
 
 print_usage() {
   cat <<EOF
 Usage: $0 [options] [<path-to-ClipText.app>]
 
-Safely uninstalls ClipText, unregisters it from macOS LaunchServices,
-resets privacy permissions (Screen Recording, Accessibility), and
-cleans application caches.
+Safely uninstalls ClipText, unregisters it from macOS LaunchServices, and
+cleans application caches. Privacy permission grants are preserved unless
+--reset-permissions is explicitly requested.
 
 Options:
   --keep-data     PRESERVE clipboard history, preferences, and the Keychain
-                  encryption key required to decrypt history. Recommended
-                  when reinstalling or resetting permissions.
+                  encryption key required to decrypt history. This option does
+                  not control macOS privacy permissions.
+  --reset-permissions
+                  Reset ClipText's Screen Recording and Accessibility grants.
+                  You will need to authorize ClipText again after reinstalling.
   --dry-run       Preview all actions and prospective deletions without
                   modifying anything on the system.
   -y, --yes,
@@ -66,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --clean-build)
       CLEAN_BUILD=1
+      shift
+      ;;
+    --reset-permissions)
+      RESET_PERMISSIONS=1
       shift
       ;;
     -h|--help)
@@ -251,9 +259,8 @@ if [[ "${KEEP_DATA}" -eq 0 ]]; then
   echo "Once the encryption key is deleted, previously encrypted clipboard"
   echo "history CAN NEVER be decrypted or recovered."
   echo ""
-  echo "To uninstall the application and reset permissions while KEEPING your"
-  echo "history and encryption keys safe, re-run with:"
-  echo "  $0 --keep-data"
+  echo "Privacy permissions are preserved by default. To deliberately reset"
+  echo "Screen Recording and Accessibility grants, add --reset-permissions."
   echo "======================================================================"
   echo ""
 
@@ -285,6 +292,11 @@ if [[ -n "${ACTIVE_PIDS}" ]]; then
     PROC_COMM=$(ps -p "${pid}" -o comm= 2>/dev/null || true)
     if ! is_cliptext_process "${pid}"; then
       echo "    Skipping PID ${pid} (${PROC_COMM}) - not a verified ClipText binary."
+      continue
+    fi
+    process_bundle="${PROC_COMM%/Contents/MacOS/ClipText}"
+    if [[ ${#TARGETS_TO_REMOVE[@]} -gt 0 ]] && [[ ! " ${TARGETS_TO_REMOVE[*]} " == *" ${process_bundle} "* ]]; then
+      echo "    Skipping PID ${pid} - it is not launching from an uninstall target."
       continue
     fi
     FOUND_VALID_PROCS=1
@@ -378,9 +390,9 @@ if [[ "${REMOVAL_FAILED}" -eq 1 ]]; then
   exit 1
 fi
 
-# 3. Reset macOS TCC Permissions (Documented policy: ScreenCapture and Accessibility)
+# 3. Optionally reset macOS TCC Permissions (ScreenCapture and Accessibility)
 echo ""
-echo "==> Step 3: Resetting macOS TCC privacy permissions..."
+echo "==> Step 3: Managing macOS TCC privacy permissions..."
 
 reset_permission() {
   local service="$1"
@@ -399,14 +411,14 @@ reset_permission() {
   fi
 }
 
-# Reset documented permissions used by ClipText
-reset_permission "ScreenCapture" "${PRIMARY_BUNDLE_ID}"
-reset_permission "Accessibility" "${PRIMARY_BUNDLE_ID}"
-
-for dev_id in "${DEV_BUNDLE_IDS[@]}"; do
-  reset_permission "ScreenCapture" "${dev_id}"
-  reset_permission "Accessibility" "${dev_id}"
-done
+if [[ "${RESET_PERMISSIONS}" -eq 1 ]]; then
+  echo "    Resetting grants. ClipText will require authorization again after reinstalling."
+  reset_permission "ScreenCapture" "${PRIMARY_BUNDLE_ID}"
+  reset_permission "Accessibility" "${PRIMARY_BUNDLE_ID}"
+else
+  echo "    Preserving Screen Recording and Accessibility grants."
+  echo "    Use --reset-permissions to remove them deliberately."
+fi
 
 # 4. Remove Temporary Caches and Saved Application State
 echo ""
@@ -577,9 +589,13 @@ echo ""
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "==> [DRY RUN COMPLETE] Simulation finished. No files, settings, or keys were modified."
 elif [[ "${KEEP_DATA}" -eq 1 ]]; then
-  echo "==> ClipText uninstallation and permission reset complete."
-  echo "    Note: Encrypted clipboard history, preferences, and Keychain keys were preserved."
+  echo "==> ClipText uninstallation complete."
+  echo "    Note: Encrypted clipboard history, preferences, Keychain keys, and privacy permissions were preserved."
 else
   echo "==> ClipText complete uninstallation finished."
-  echo "    System state restored: Application, permissions, preferences, and data were removed."
+  if [[ "${RESET_PERMISSIONS}" -eq 1 ]]; then
+    echo "    Application, privacy permissions, preferences, and data were removed."
+  else
+    echo "    Application, preferences, and data were removed; privacy permissions were preserved."
+  fi
 fi

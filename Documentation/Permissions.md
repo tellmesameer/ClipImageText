@@ -61,7 +61,7 @@ CLIPTEXT_SIGNING_IDENTITY="Apple Development: sameer355u@gmail.com (9325V822RQ)"
 
 **Benefits for Development**:
 - macOS TCC (Screen Recording permission) tracks applications by Designated Requirement. With a certificate-backed signature, the DR is bound to the developer certificate and Team ID rather than the binary's CDHash.
-- Screen Recording permissions **persist across rebuilds**, eliminating repetitive TCC prompts during local development.
+- Screen Recording and Accessibility permissions persist across rebuilds only when the bundle identifier, Team ID, and certificate-backed designated requirement remain stable. Release builds require the configured Apple Development identity for Team `B6537Y9X84`; they never fall back to ad-hoc signing.
 
 > **One-Time Migration Grant**: When migrating from an ad-hoc signed build to an Apple Development signed build, macOS requires granting Screen Recording permission once in **System Settings > Privacy & Security > Screen Recording**, because the Designated Requirement changes from CDHash-based to certificate-based. Subsequent rebuilds with the same certificate retain the grant automatically.
 
@@ -113,8 +113,11 @@ When launching a locally built development bundle for the first time without Dev
 To test the first-run permission onboarding experience or remove ClipText, run the uninstall script:
 
 ```bash
-# Recommended for permission reset (preserves history and Keychain keys):
+# Normal uninstall (preserves privacy permissions, history, and Keychain keys):
 ./scripts/uninstall.sh --keep-data
+
+# Deliberate permission reset (preserves history and Keychain keys):
+./scripts/uninstall.sh --keep-data --reset-permissions
 
 # Preview prospective changes safely:
 ./scripts/uninstall.sh --dry-run
@@ -128,6 +131,6 @@ This script:
 2. Validates target bundles strictly (rejects symlinks, non-.app paths, and mismatched `CFBundleIdentifier`).
 3. Unregisters installed app bundles from the macOS LaunchServices database.
 4. Removes verified `ClipText.app` bundles.
-5. Resets macOS TCC permissions (`ScreenCapture` and `Accessibility`) using `tccutil reset`.
+5. Preserves macOS TCC permissions by default. Only `--reset-permissions` runs `tccutil reset` for `ScreenCapture` and `Accessibility`; use it only when you intend to authorize ClipText again.
 6. Cleans application caches and saved application state.
 7. Manages clipboard history and the Keychain AES-GCM encryption key (`service: com.kelsiito.clipboard.local-storage`, `account: aes-gcm-key-v1`), preserving them when `--keep-data` is specified and requiring explicit confirmation before permanent deletion.

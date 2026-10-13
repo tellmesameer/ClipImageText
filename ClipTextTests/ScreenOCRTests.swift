@@ -234,9 +234,20 @@ final class ScreenOCRTests: XCTestCase {
         XCTAssertNil(receivedSnapshot)
     }
 
-    func testPermissionsManagerInitializesCleanly() {
+    func testAccessibilityFirstLaunchGuidanceDoesNotRequireAnAuthorizationPrompt() {
+        XCTAssertNil(AccessibilityPermissionFlow.guidanceMessage(isTrusted: true))
+        XCTAssertEqual(
+            AccessibilityPermissionFlow.guidanceMessage(isTrusted: false),
+            "Accessibility is optional. Enable it in Settings to position the picker near the field and paste automatically."
+        )
+    }
+
+    func testPermissionsManagerInitializesWithoutRequestingAccess() {
         let permissions = PermissionsManager()
+        XCTAssertNotEqual(permissions.permissionStatus, .checking)
         XCTAssertTrue(permissions.permissionStatus == .allGranted || permissions.permissionStatus == .screenRecordingDenied)
+        // Initialization uses CGPreflightScreenCaptureAccess only. It must not call
+        // CGRequestScreenCaptureAccess or trigger an authorization prompt.
     }
 
     func testCaptureCoordinatorExecutesEndToEndOCRSingleEntry() async throws {

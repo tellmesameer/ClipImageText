@@ -65,10 +65,14 @@ Performs comprehensive bundle integrity, Info.plist, code signature, entitlement
 Output: `build/ClipText-1.0.zip`
 
 ### 5. Safe Uninstall & Permission Reset
-Safely uninstalls ClipText, unregisters it from LaunchServices, resets macOS TCC permissions, and optionally cleans data and Keychain keys:
+Safely uninstalls ClipText and unregisters it from LaunchServices. Normal uninstalls preserve macOS Screen Recording and Accessibility grants; `--keep-data` controls only ClipText's stored data, preferences, and encryption key.
 ```bash
-# Safe uninstall and permission reset while preserving history and encryption keys
+# Safe uninstall while preserving history, encryption keys, and privacy grants
 ./scripts/uninstall.sh --keep-data
+
+# Deliberately remove Screen Recording and Accessibility grants.
+# You will need to authorize ClipText again after reinstalling.
+./scripts/uninstall.sh --keep-data --reset-permissions
 
 # Preview all actions without modifying files or system state
 ./scripts/uninstall.sh --dry-run
@@ -129,7 +133,7 @@ See [Documentation/ManualAcceptanceChecklist.md](Documentation/ManualAcceptanceC
   - **Manual Approval Procedure**: Right-click (or Control-click) `ClipText.app` in Finder, choose **Open**, and click **Open** in the confirmation dialog. Alternatively, go to **System Settings > Privacy & Security** and click **Open Anyway** in the Security section.
   - `scripts/install.sh` deliberately preserves Gatekeeper controls and does not remove quarantine attributes.
 - **Screen Recording**: Required for capturing screen regions for Apple Vision OCR. If prompted, grant permission in **System Settings > Privacy & Security > Screen Recording** and relaunch the app.
-- **Accessibility**: Optional. Enables automatic caret-anchored panel placement and direct synthetic pasting.
+- **Accessibility**: Optional. Enables automatic caret-anchored panel placement and direct synthetic pasting. ClipText checks this grant without prompting at launch; when unavailable, Settings explains the limitation and opens the Accessibility pane on request.
 - **Local Development Signing vs Public Distribution**: `scripts/build.sh` applies local ad-hoc signing (`codesign -s - --entitlements ...`). **The current build is ad-hoc signed and not notarized.** Public distribution requires an Apple Developer ID Application certificate, Hardened Runtime, and Apple notarization via `notarytool`.
 - See [Documentation/Permissions.md](Documentation/Permissions.md) for full details.
 

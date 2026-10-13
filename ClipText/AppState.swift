@@ -6,6 +6,13 @@ import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum AccessibilityPermissionFlow {
+    static func guidanceMessage(isTrusted: Bool) -> String? {
+        guard !isTrusted else { return nil }
+        return "Accessibility is optional. Enable it in Settings to position the picker near the field and paste automatically."
+    }
+}
+
 enum HotKeyTarget: String, Equatable {
     case history
     case gif
@@ -446,10 +453,10 @@ final class AppState: ObservableObject {
     private func presentPanel(targetApplication resolvedTargetApplication: NSRunningApplication?) {
         targetApplication = resolvedTargetApplication
 
-        if !AXIsProcessTrusted() {
-            statusMessage = "Enable Accessibility to position the picker near the field and paste automatically."
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
+        // Do not invoke AXIsProcessTrustedWithOptions here: that would present the
+        // macOS authorization prompt every time the history picker is opened.
+        if let guidance = AccessibilityPermissionFlow.guidanceMessage(isTrusted: isAccessibilityTrusted) {
+            statusMessage = guidance
         }
 
         panelController.show(

@@ -69,7 +69,18 @@ fi
 
 DEST_APP="${TARGET_DIR}/${APP_NAME}"
 
+OTHER_APP=""
+if [[ "${DEST_APP}" == "/Applications/${APP_NAME}" && -d "${HOME}/Applications/${APP_NAME}" ]]; then
+  OTHER_APP="${HOME}/Applications/${APP_NAME}"
+elif [[ "${DEST_APP}" == "${HOME}/Applications/${APP_NAME}" && -d "/Applications/${APP_NAME}" ]]; then
+  OTHER_APP="/Applications/${APP_NAME}"
+fi
+
 echo "==> Target installation directory: ${TARGET_DIR}"
+if [[ -n "${OTHER_APP}" ]]; then
+  echo "==> Note: Another ClipText installation exists at ${OTHER_APP}."
+  echo "    Install and launch one location consistently to preserve a stable TCC identity."
+fi
 mkdir -p "${TARGET_DIR}"
 
 # If an older instance of ClipText is running, terminate it cleanly before replacing the binary

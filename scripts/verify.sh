@@ -5,7 +5,32 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-APP_PATH="${1:-}"
+EXPECTED_TEAM_ID="B6537Y9X84"
+SKIP_LAUNCH=0
+APP_PATH=""
+
+for argument in "$@"; do
+  case "${argument}" in
+    --skip-launch)
+      SKIP_LAUNCH=1
+      ;;
+    -h|--help)
+      echo "Usage: $0 [--skip-launch] [path/to/ClipText.app]"
+      exit 0
+      ;;
+    -*)
+      echo "Error: Unknown option: ${argument}" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "${APP_PATH}" ]]; then
+        echo "Error: Multiple app paths supplied." >&2
+        exit 1
+      fi
+      APP_PATH="${argument}"
+      ;;
+  esac
+done
 
 if [[ -z "${APP_PATH}" ]]; then
   if [[ -d "/Applications/ClipText.app" ]]; then
@@ -67,11 +92,20 @@ SIGNING_INFO=$(codesign -dvvv "${APP_PATH}" 2>&1)
 echo "${SIGNING_INFO}" | grep -E "Authority|Signature=|TeamIdentifier" || true
 DESIGNATED_REQ=$(codesign -dr - "${APP_PATH}" 2>&1 | tail -n 1)
 echo "  Designated Requirement: ${DESIGNATED_REQ}"
-if echo "${SIGNING_INFO}" | grep -q "Authority=Apple Development"; then
-  echo "  ✓ Stable Apple Development signature verified (TeamIdentifier present, DR certificate-bound)."
-else
-  echo "  ✓ Local code signature is valid and strict check passed (ad-hoc/development; NOT Developer ID signed or notarized)."
+TEAM_ID=$(echo "${SIGNING_INFO}" | sed -n 's/^TeamIdentifier=//p' | head -n 1)
+if ! echo "${SIGNING_INFO}" | grep -q '^Authority=Apple Development'; then
+  echo "FAIL: Expected an Apple Development signature; refusing ad-hoc identity changes that invalidate TCC grants." >&2
+  exit 1
 fi
+if [[ "${TEAM_ID}" != "${EXPECTED_TEAM_ID}" ]]; then
+  echo "FAIL: Expected TeamIdentifier ${EXPECTED_TEAM_ID}, got: ${TEAM_ID:-<none>}" >&2
+  exit 1
+fi
+if ! echo "${DESIGNATED_REQ}" | grep -q 'identifier "com.cliptext.app"'; then
+  echo "FAIL: Designated requirement does not contain com.cliptext.app." >&2
+  exit 1
+fi
+echo "  ✓ Stable Apple Development signature, Team ID, and bundle requirement verified."
 
 # 4. Entitlements Verification
 echo "[4/5] Inspecting embedded entitlements..."
@@ -88,6 +122,13 @@ fi
 
 # 5. Independent Execution Smoke Test
 echo "[5/5] Testing independent launch without Xcode..."
+if [[ "${SKIP_LAUNCH}" -eq 1 ]]; then
+  echo "  ✓ Launch smoke test skipped by --skip-launch."
+  echo "=========================================="
+  echo "ALL NON-LAUNCH VERIFICATION CHECKS PASSED FOR ${APP_PATH}"
+  echo "=========================================="
+  exit 0
+fi
 # shortcut: 2-second background launch check, upgrade to XCUITest runner for full headless UI automation
 "${APP_PATH}/Contents/MacOS/ClipText" >/dev/null 2>&1 &
 APP_PID=$!

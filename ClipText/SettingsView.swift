@@ -381,8 +381,15 @@ struct SettingsView: View {
                                     .foregroundStyle(appState.isAccessibilityTrusted ? .green : .orange)
                             }
 
+                            Text(appState.isAccessibilityTrusted
+                                 ? "Accessibility is active for automatic caret placement and paste."
+                                 : "Accessibility is optional. ClipText will continue to copy selected history items, but automatic caret placement and paste require enabling ClipText in System Settings > Privacy & Security > Accessibility.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
                             if !appState.isAccessibilityTrusted {
-                                Button("Open System Settings") {
+                                Button("Open Accessibility Settings") {
                                     appState.openAccessibilitySettings()
                                 }
                                 .buttonStyle(.bordered)

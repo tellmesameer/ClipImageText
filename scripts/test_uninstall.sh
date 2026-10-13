@@ -269,20 +269,32 @@ fi
 chmod -R 755 "${RO_PARENT}"
 
 echo ""
-echo "--- Group 6: Documented TCC Policy & Process Identity Verification ---"
+echo "--- Group 6: Permission Preservation & Process Identity Verification ---"
 
-# Verify TCC reset commands in --dry-run match documented policy (ScreenCapture and Accessibility only, NO redundant 'All')
-assert_output_contains "TCC policy resets ScreenCapture" \
+# Normal uninstalls must preserve grants; only an explicit flag may reset them.
+assert_output_contains "Default uninstall preserves privacy permissions" \
+  "Preserving Screen Recording and Accessibility grants" \
+  "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
+
+assert_output_not_contains "Default uninstall does not reset ScreenCapture" \
+  "Would reset TCC permission 'ScreenCapture'" \
+  "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
+
+assert_output_not_contains "Default uninstall does not reset Accessibility" \
+  "Would reset TCC permission 'Accessibility'" \
+  "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
+
+assert_output_contains "Explicit permission reset includes ScreenCapture" \
   "Would reset TCC permission 'ScreenCapture' for com.cliptext.app" \
-  "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
+  "${UNINSTALL_SCRIPT}" --dry-run --reset-permissions "${VALID_MOCK_APP}"
 
-assert_output_contains "TCC policy resets Accessibility" \
+assert_output_contains "Explicit permission reset includes Accessibility" \
   "Would reset TCC permission 'Accessibility' for com.cliptext.app" \
-  "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
+  "${UNINSTALL_SCRIPT}" --dry-run --reset-permissions "${VALID_MOCK_APP}"
 
-assert_output_not_contains "TCC policy does not make redundant 'All' resets" \
+assert_output_not_contains "Permission reset does not make redundant 'All' resets" \
   "Would reset TCC permission 'All'" \
-  "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
+  "${UNINSTALL_SCRIPT}" --dry-run --reset-permissions "${VALID_MOCK_APP}"
 
 # Process verification test: start an unrelated background process named ClipText
 # that is NOT in a ClipText.app bundle
@@ -290,8 +302,8 @@ assert_output_not_contains "TCC policy does not make redundant 'All' resets" \
 DUMMY_PID=$!
 sleep 0.5
 
-assert_output_contains "Skips terminating unrelated process merely named ClipText" \
-  "not a verified ClipText binary" \
+assert_output_contains "Does not find or terminate the synthetic unrelated process" \
+  "No active ClipText process found." \
   "${UNINSTALL_SCRIPT}" --dry-run "${VALID_MOCK_APP}"
 
 # Verify dummy process is still alive after dry-run
