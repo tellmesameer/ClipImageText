@@ -1,5 +1,7 @@
 # ClipText
 
+[![CI](https://github.com/tellmesameer/ClipImageText/actions/workflows/ci.yml/badge.svg)](https://github.com/tellmesameer/ClipImageText/actions/workflows/ci.yml)
+
 ClipText is a lightweight, native macOS menu-bar application that combines **PowerToys-style screen-region text extraction** with **persistent, encrypted clipboard history** into a unified tool.
 
 Operating 100% locally on Apple Silicon (macOS 14+ Sonoma), ClipText sends zero data to external services and requires no account or cloud dependencies.
@@ -71,7 +73,21 @@ Run the full unit test suite using `xcodebuild`:
 xcodebuild -project ClipText.xcodeproj -scheme ClipText -destination 'platform=macOS' test
 ```
 
-All 72 tests across clipboard persistence, AES-GCM encryption, OCR coordinate conversion, line sorting, and deduplication execute natively.
+All **85 tests** across clipboard persistence, AES-GCM encryption, OCR coordinate conversion, line sorting, deduplication, smart paste, snippet library, panel placement, and paused monitoring execute natively.
+
+### Automated vs Manual Testing
+
+| Category | Method | Count |
+| :--- | :--- | :--- |
+| Clipboard store persistence & deduplication | XCTest (CI) | 62 |
+| Screen OCR pipeline & coordinator | XCTest (CI) | 12 |
+| Text processor (line sorting, normalization) | XCTest (CI) | 11 |
+| Global hotkey invocation from another app | Manual | — |
+| Multi-display region selection & Retina scaling | Manual | — |
+| Screen Recording permission grant & relaunch | Manual | — |
+| Independent launch outside Xcode | `scripts/verify.sh` | — |
+
+See [Documentation/ManualAcceptanceChecklist.md](Documentation/ManualAcceptanceChecklist.md) for the full manual test procedure.
 
 ---
 
@@ -92,7 +108,7 @@ All 72 tests across clipboard persistence, AES-GCM encryption, OCR coordinate co
   - `scripts/install.sh` deliberately preserves Gatekeeper controls and does not remove quarantine attributes.
 - **Screen Recording**: Required for capturing screen regions for Apple Vision OCR. If prompted, grant permission in **System Settings > Privacy & Security > Screen Recording** and relaunch the app.
 - **Accessibility**: Optional. Enables automatic caret-anchored panel placement and direct synthetic pasting.
-- **Local Development Signing vs Public Distribution**: `scripts/build.sh` applies local ad-hoc signing (`codesign -s - --entitlements ...`). Public distribution requires an Apple Developer ID Application certificate, Hardened Runtime, and Apple notarization via `notarytool`.
+- **Local Development Signing vs Public Distribution**: `scripts/build.sh` applies local ad-hoc signing (`codesign -s - --entitlements ...`). **The current build is ad-hoc signed and not notarized.** Public distribution requires an Apple Developer ID Application certificate, Hardened Runtime, and Apple notarization via `notarytool`.
 - See [Documentation/Permissions.md](Documentation/Permissions.md) for full details.
 
 ---

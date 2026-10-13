@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCHEME: ClipText
+  PROJECT: ClipText.xcodeproj
+  DESTINATION: 'platform=macOS'
+
+jobs:
+  test:
+    name: Test (macOS · Xcode 27)
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Print environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcodebuild -list -project "$PROJECT"
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "$DESTINATION" \
+            -resultBundlePath TestResults.xcresult \
+            test 2>&1 | tee test_output.log
+
+      - name: Verify test count
+        run: |
+          PASS_COUNT=$(grep -c 'Test case.*passed' test_output.log || true)
+          FAIL_COUNT=$(grep -c 'Test case.*failed' test_output.log || true)
+          echo "Tests passed: ${PASS_COUNT}"
+          echo "Tests failed: ${FAIL_COUNT}"
+          if [[ "${FAIL_COUNT}" -gt 0 ]]; then
+            echo "::error::${FAIL_COUNT} test(s) failed"
+            exit 1
+          fi
+          if [[ "${PASS_COUNT}" -lt 1 ]]; then
+            echo "::error::No tests were executed"
+            exit 1
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          retention-days: 14
+
+  build-release:
+    name: Release Build
+    runs-on: macos-26
+    timeout-minutes: 20
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Release configuration
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination "$DESTINATION" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=YES \
+            build 2>&1 | tee build_output.log
+
+      - name: Verify built app bundle exists
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release/ClipText.app"
+          test -d "${APP_PATH}" || { echo "::error::ClipText.app not found at ${APP_PATH}"; exit 1; }
+          test -x "${APP_PATH}/Contents/MacOS/ClipText" || { echo "::error::Executable missing"; exit 1; }
+          test -f "${APP_PATH}/Contents/Info.plist" || { echo "::error::Info.plist missing"; exit 1; }
+          echo "✓ App bundle structure verified"
+
+      - name: Verify Info.plist configuration
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release/ClipText.app"
+          BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "${APP_PATH}/Contents/Info.plist")
+          LS_UI=$(plutil -extract LSUIElement raw "${APP_PATH}/Contents/Info.plist")
+          USAGE=$(plutil -extract NSScreenCaptureUsageDescription raw "${APP_PATH}/Contents/Info.plist")
+          echo "Bundle ID: ${BUNDLE_ID}"
+          echo "LSUIElement: ${LS_UI}"
+          echo "Screen capture usage description: ${USAGE}"
+          [[ "${BUNDLE_ID}" == "com.cliptext.app" ]] || { echo "::error::Wrong bundle ID: ${BUNDLE_ID}"; exit 1; }
+          [[ "${LS_UI}" == "true" || "${LS_UI}" == "1" ]] || { echo "::error::LSUIElement not set"; exit 1; }
+          [[ -n "${USAGE}" ]] || { echo "::error::Missing NSScreenCaptureUsageDescription"; exit 1; }
+
+      - name: Verify ad-hoc code signature
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release/ClipText.app"
+          codesign -v --deep --strict "${APP_PATH}"
+          echo "✓ Code signature valid"
+
+      - name: Create versioned archive
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release/ClipText.app"
+          VERSION=$(plutil -extract CFBundleShortVersionString raw "${APP_PATH}/Contents/Info.plist" 2>/dev/null || echo "1.0")
+          ARCHIVE="build/ClipText-${VERSION}.zip"
+          (cd build/DerivedData/Build/Products/Release && zip -q -r -y "../../../../${ARCHIVE}" "ClipText.app")
+          echo "✓ Archive created: ${ARCHIVE}"
+          ls -lh "build/ClipText-${VERSION}.zip"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipText-Release
+          path: build/ClipText-*.zip
+          retention-days: 30
