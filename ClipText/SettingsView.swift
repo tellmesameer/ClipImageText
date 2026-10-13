@@ -318,8 +318,8 @@ struct SettingsView: View {
                             }
 
                             Text(appState.hasCustomPanelPosition
-                                 ? "You moved the clipboard panel with the drag grip. ClipText will reopen at your chosen position until reset."
-                                 : "ClipText opens automatically next to your focused text caret or active window. Drag the six-dot grip in the header to reposition it.")
+                                 ? "You moved the clipboard panel. ClipText will reopen at your chosen position until reset."
+                                 : "ClipText opens automatically next to your focused text caret or active window. Drag anywhere in the header to reposition it.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)

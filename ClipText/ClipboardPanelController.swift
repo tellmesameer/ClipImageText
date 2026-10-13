@@ -158,73 +158,10 @@ final class PanelDragHandleNSView: NSView {
     var onDragEnded: ((NSPoint) -> Void)?
     var onResetRequested: (() -> Void)?
 
-    private var isHovered: Bool = false
-
     override var acceptsFirstResponder: Bool { false }
 
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        addCursorRect(bounds, cursor: .openHand)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for trackingArea in trackingAreas {
-            removeTrackingArea(trackingArea)
-        }
-        let trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .activeAlways],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(trackingArea)
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-
-        let bgPath = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
-        if isHovered {
-            NSColor.labelColor.withAlphaComponent(0.08).setFill()
-            bgPath.fill()
-        }
-
-        let dotDiameter: CGFloat = 3
-        let spacing: CGFloat = 3
-        let totalWidth = 2 * dotDiameter + spacing
-        let totalHeight = 3 * dotDiameter + 2 * spacing
-
-        let startX = (bounds.width - totalWidth) / 2
-        let startY = (bounds.height - totalHeight) / 2
-
-        let dotColor: NSColor
-        if hasCustomPosition {
-            dotColor = NSColor.systemCyan.withAlphaComponent(isHovered ? 1.0 : 0.8)
-        } else {
-            dotColor = NSColor.secondaryLabelColor.withAlphaComponent(isHovered ? 0.9 : 0.6)
-        }
-        dotColor.setFill()
-
-        for col in 0..<2 {
-            for row in 0..<3 {
-                let x = startX + CGFloat(col) * (dotDiameter + spacing)
-                let y = startY + CGFloat(row) * (dotDiameter + spacing)
-                let dotRect = NSRect(x: x, y: y, width: dotDiameter, height: dotDiameter)
-                let dotPath = NSBezierPath(ovalIn: dotRect)
-                dotPath.fill()
-            }
-        }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -233,8 +170,12 @@ final class PanelDragHandleNSView: NSView {
             return
         }
         guard let window = self.window else { return }
+        let initialOrigin = window.frame.origin
         window.performDrag(with: event)
-        onDragEnded?(window.frame.origin)
+        let finalOrigin = window.frame.origin
+        if finalOrigin != initialOrigin {
+            onDragEnded?(finalOrigin)
+        }
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -255,6 +196,8 @@ final class PanelDragHandleNSView: NSView {
     }
 }
 
+typealias PanelHeaderDragView = PanelDragHandleNSView
+
 struct PanelDragHandleRepresentable: NSViewRepresentable {
     var hasCustomPosition: Bool
     var onDragEnded: ((NSPoint) -> Void)?
@@ -262,12 +205,13 @@ struct PanelDragHandleRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PanelDragHandleNSView {
         let view = PanelDragHandleNSView()
+        view.wantsLayer = true
         view.hasCustomPosition = hasCustomPosition
         view.onDragEnded = onDragEnded
         view.onResetRequested = onResetPosition
         view.toolTip = hasCustomPosition
-            ? "Drag to move panel • Double-click or right-click to reset to caret"
-            : "Drag to move panel"
+            ? "Drag anywhere in header to move panel • Double-click or right-click to reset to caret"
+            : "Drag anywhere in header to move panel"
         return view
     }
 
@@ -276,11 +220,12 @@ struct PanelDragHandleRepresentable: NSViewRepresentable {
         nsView.onDragEnded = onDragEnded
         nsView.onResetRequested = onResetPosition
         nsView.toolTip = hasCustomPosition
-            ? "Drag to move panel • Double-click or right-click to reset to caret"
-            : "Drag to move panel"
-        nsView.needsDisplay = true
+            ? "Drag anywhere in header to move panel • Double-click or right-click to reset to caret"
+            : "Drag anywhere in header to move panel"
     }
 }
+
+typealias PanelHeaderDragRepresentable = PanelDragHandleRepresentable
 
 @MainActor
 final class ClipboardPanelController {
@@ -920,6 +865,25 @@ struct ClipboardPanelView: View {
         }
     }
 
+    private var headerDragIndicator: some View {
+        HStack(spacing: 3) {
+            VStack(spacing: 3) {
+                Circle().frame(width: 2.5, height: 2.5)
+                Circle().frame(width: 2.5, height: 2.5)
+                Circle().frame(width: 2.5, height: 2.5)
+            }
+            VStack(spacing: 3) {
+                Circle().frame(width: 2.5, height: 2.5)
+                Circle().frame(width: 2.5, height: 2.5)
+                Circle().frame(width: 2.5, height: 2.5)
+            }
+        }
+        .foregroundStyle(hasCustomPosition ? Color.cyan.opacity(0.8) : Color.secondary.opacity(0.35))
+        .frame(width: 20, height: 16)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
     private func headerView(allItemsCount: Int, filteredCount: Int) -> some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
@@ -929,24 +893,11 @@ struct ClipboardPanelView: View {
                 Text("ClipText")
                     .font(.headline.weight(.semibold))
             }
+            .allowsHitTesting(false)
 
             Spacer()
 
-            PanelDragHandleRepresentable(
-                hasCustomPosition: hasCustomPosition,
-                onDragEnded: { newOrigin in
-                    hasCustomPosition = true
-                    onPanelDragged?(newOrigin)
-                },
-                onResetPosition: {
-                    hasCustomPosition = false
-                    onResetPosition?()
-                }
-            )
-            .frame(width: 44, height: 22)
-            .help(hasCustomPosition
-                  ? "Drag to move panel • Double-click or right-click to reset to caret"
-                  : "Drag to move panel")
+            headerDragIndicator
 
             Spacer()
 
@@ -958,9 +909,29 @@ struct ClipboardPanelView: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(Color.primary.opacity(0.08), in: Capsule())
+                .allowsHitTesting(false)
 
             closeButton
         }
+        .frame(height: 28)
+        .background {
+            PanelDragHandleRepresentable(
+                hasCustomPosition: hasCustomPosition,
+                onDragEnded: { newOrigin in
+                    hasCustomPosition = true
+                    onPanelDragged?(newOrigin)
+                },
+                onResetPosition: {
+                    hasCustomPosition = false
+                    onResetPosition?()
+                }
+            )
+            .padding(.top, -14)
+            .padding(.horizontal, -14)
+        }
+        .help(hasCustomPosition
+              ? "Drag anywhere in header to move panel • Double-click or right-click to reset to caret"
+              : "Drag anywhere in header to move panel")
         .contextMenu {
             if hasCustomPosition {
                 Button("Reset to Caret Placement") {

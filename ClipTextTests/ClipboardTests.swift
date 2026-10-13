@@ -1375,4 +1375,167 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(updatedItem.fingerprint, snapshot.fingerprint, "Must upgrade to v2 fingerprint")
         XCTAssertTrue(updatedItem.fingerprint.hasPrefix("v2:"))
     }
+
+    @MainActor
+    func testHeaderDragViewDoubleAndRightClickActions() {
+        let dragView = PanelDragHandleNSView(frame: NSRect(x: 0, y: 0, width: 480, height: 28))
+        XCTAssertTrue(dragView.acceptsFirstMouse(for: nil))
+        XCTAssertFalse(dragView.acceptsFirstResponder)
+
+        var resetCalled = false
+        dragView.onResetRequested = {
+            resetCalled = true
+        }
+
+        var dragEndedPoint: NSPoint?
+        dragView.onDragEnded = { pt in
+            dragEndedPoint = pt
+        }
+
+        // Double click triggers reset
+        let doubleClickEvent = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: NSPoint(x: 50, y: 14),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 2,
+            pressure: 1.0
+        )!
+        dragView.mouseDown(with: doubleClickEvent)
+        XCTAssertTrue(resetCalled)
+
+        // Single click without movement does not invoke onDragEnded
+        let singleClickEvent = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: NSPoint(x: 50, y: 14),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 2,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 480, height: 28),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = dragView
+        dragView.mouseDown(with: singleClickEvent)
+        XCTAssertNil(dragEndedPoint, "Single click without moving window must not trigger onDragEnded")
+
+        // hasCustomPosition flag propagates
+        dragView.hasCustomPosition = true
+        XCTAssertTrue(dragView.hasCustomPosition)
+    }
+
+    private struct HeaderTestHost: View {
+        var body: some View {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.on.clipboard.fill")
+                        Text("ClipText")
+                    }
+                    .allowsHitTesting(false)
+
+                    Spacer()
+
+                    // Integrated 6-dot indicator
+                    HStack(spacing: 3) {
+                        VStack(spacing: 3) {
+                            Circle().frame(width: 2.5, height: 2.5)
+                            Circle().frame(width: 2.5, height: 2.5)
+                            Circle().frame(width: 2.5, height: 2.5)
+                        }
+                        VStack(spacing: 3) {
+                            Circle().frame(width: 2.5, height: 2.5)
+                            Circle().frame(width: 2.5, height: 2.5)
+                            Circle().frame(width: 2.5, height: 2.5)
+                        }
+                    }
+                    .allowsHitTesting(false)
+
+                    Spacer()
+
+                    Text("42")
+                        .allowsHitTesting(false)
+
+                    Button(action: {}) {
+                        Image(systemName: "xmark")
+                    }
+                }
+                .frame(height: 28)
+                .background {
+                    PanelDragHandleRepresentable(hasCustomPosition: false)
+                        .padding(.top, -14)
+                        .padding(.horizontal, -14)
+                }
+
+                Text("Panel Body Content")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .padding(14)
+            .frame(width: ClipboardPanelPlacement.defaultSize.width, height: ClipboardPanelPlacement.defaultSize.height)
+        }
+    }
+
+    @MainActor
+    func testHeaderDragHitTestingAndCloseButtonIsolation() throws {
+        let hostingView = NSHostingView(rootView: HeaderTestHost())
+        hostingView.frame = NSRect(origin: .zero, size: ClipboardPanelPlacement.defaultSize)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: ClipboardPanelPlacement.defaultSize),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+
+        func findDragView(in view: NSView) -> PanelDragHandleNSView? {
+            if let drag = view as? PanelDragHandleNSView { return drag }
+            for subview in view.subviews {
+                if let found = findDragView(in: subview) { return found }
+            }
+            return nil
+        }
+
+        let dragView = try XCTUnwrap(findDragView(in: hostingView))
+
+        func hitTestDragLocal(_ localPoint: NSPoint) -> NSView? {
+            let pointInSuper = dragView.convert(localPoint, to: hostingView.superview)
+            return hostingView.hitTest(pointInSuper)
+        }
+
+        // 1. Hit test over title / icon (x: 40 from left)
+        let iconHit = hitTestDragLocal(NSPoint(x: 40, y: dragView.bounds.midY))
+        XCTAssertTrue(iconHit is PanelDragHandleNSView, "Header icon/title area must hit PanelDragHandleNSView, got: \(String(describing: iconHit))")
+
+        // 2. Hit test over center six-dot indicator (midX)
+        let centerHit = hitTestDragLocal(NSPoint(x: dragView.bounds.midX, y: dragView.bounds.midY))
+        XCTAssertTrue(centerHit is PanelDragHandleNSView, "Header center indicator area must hit PanelDragHandleNSView, got: \(String(describing: centerHit))")
+
+        // 3. Hit test over empty space
+        let emptyHit = hitTestDragLocal(NSPoint(x: 150, y: dragView.bounds.midY))
+        XCTAssertTrue(emptyHit is PanelDragHandleNSView, "Header empty spacer area must hit PanelDragHandleNSView, got: \(String(describing: emptyHit))")
+
+        // 4. Hit test over item count area (to the left of close button)
+        let countHit = hitTestDragLocal(NSPoint(x: dragView.bounds.maxX - 55, y: dragView.bounds.midY))
+        XCTAssertTrue(countHit is PanelDragHandleNSView, "Item count capsule area must hit PanelDragHandleNSView, got: \(String(describing: countHit))")
+
+        // 5. Hit test over close button (rightmost edge)
+        let closeHit = hitTestDragLocal(NSPoint(x: dragView.bounds.maxX - 27, y: dragView.bounds.midY))
+        XCTAssertFalse(closeHit is PanelDragHandleNSView, "Close button must NOT hit PanelDragHandleNSView")
+        XCTAssertNotNil(closeHit, "Close button hit-test must return an interactive control view")
+
+        // 6. Hit test in panel body (search bar / list area in window coordinate space)
+        let bodyHit = hostingView.hitTest(NSPoint(x: 240, y: 150))
+        XCTAssertFalse(bodyHit is PanelDragHandleNSView, "Panel body must NOT be draggable")
+    }
 }
