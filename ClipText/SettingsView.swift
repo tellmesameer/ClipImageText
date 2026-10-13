@@ -299,6 +299,34 @@ struct SettingsView: View {
                     }
                 }
 
+                settingsSection("Panel placement") {
+                    settingsCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label(
+                                    appState.hasCustomPanelPosition ? "Custom position remembered" : "Automatic (near text caret)",
+                                    systemImage: appState.hasCustomPanelPosition ? "hand.point.up.left.and.text" : "character.cursor.ibeam"
+                                )
+                                Spacer()
+                                if appState.hasCustomPanelPosition {
+                                    Button("Reset to Caret Placement") {
+                                        appState.resetPanelPosition()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                            }
+
+                            Text(appState.hasCustomPanelPosition
+                                 ? "You moved the clipboard panel with the drag grip. ClipText will reopen at your chosen position until reset."
+                                 : "ClipText opens automatically next to your focused text caret or active window. Drag the six-dot grip in the header to reposition it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
                 settingsSection("Permissions") {
                     settingsCard {
                         VStack(alignment: .leading, spacing: 12) {

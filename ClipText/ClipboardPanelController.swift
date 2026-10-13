@@ -12,7 +12,27 @@ private final class ClipboardPanel: NSPanel {
     }
 }
 
+struct ScreenGeometry: Equatable {
+    let frame: NSRect
+    let visibleFrame: NSRect
+
+    init(frame: NSRect, visibleFrame: NSRect) {
+        self.frame = frame
+        self.visibleFrame = visibleFrame
+    }
+
+    init(screen: NSScreen) {
+        self.frame = screen.frame
+        self.visibleFrame = screen.visibleFrame
+    }
+}
+
 enum ClipboardPanelPlacement {
+    static let defaultSize = NSSize(width: 480, height: 350)
+    static let visibleListHeight: CGFloat = 220
+    static let margin: CGFloat = 12
+    static let savedPositionKey = "clipboard.savedPanelPosition"
+
     static func composerAnchor(in window: CGRect, bottomInset: CGFloat = 96) -> CGRect {
         let y = max(window.minY, window.maxY - max(bottomInset, 0))
         return CGRect(x: window.midX - 0.5, y: y, width: 1, height: 1)
@@ -38,12 +58,288 @@ enum ClipboardPanelPlacement {
 
         return NSPoint(x: originX, y: originY)
     }
+
+    static func clampedOrigin(
+        proposed: NSPoint,
+        panelSize: NSSize,
+        visibleFrame: NSRect,
+        margin: CGFloat = 12
+    ) -> NSPoint {
+        let minimumX = visibleFrame.minX + margin
+        let maximumX = max(minimumX, visibleFrame.maxX - panelSize.width - margin)
+        let originX = min(max(proposed.x, minimumX), maximumX)
+
+        let minimumY = visibleFrame.minY + margin
+        let maximumY = max(minimumY, visibleFrame.maxY - panelSize.height - margin)
+        let originY = min(max(proposed.y, minimumY), maximumY)
+
+        return NSPoint(x: originX, y: originY)
+    }
+
+    static func bestScreen(
+        for proposedRect: NSRect,
+        in screens: [ScreenGeometry],
+        fallback: ScreenGeometry
+    ) -> ScreenGeometry {
+        guard !screens.isEmpty else { return fallback }
+
+        var best: ScreenGeometry?
+        var maxIntersectionArea: CGFloat = 0
+
+        for screen in screens {
+            let intersection = screen.frame.intersection(proposedRect)
+            if !intersection.isNull && !intersection.isEmpty {
+                let area = intersection.width * intersection.height
+                if area > maxIntersectionArea {
+                    maxIntersectionArea = area
+                    best = screen
+                }
+            }
+        }
+
+        if let best { return best }
+
+        let targetCenter = CGPoint(x: proposedRect.midX, y: proposedRect.midY)
+        let closest = screens.min(by: { s1, s2 in
+            let c1 = CGPoint(x: s1.frame.midX, y: s1.frame.midY)
+            let c2 = CGPoint(x: s2.frame.midX, y: s2.frame.midY)
+            let d1 = (c1.x - targetCenter.x) * (c1.x - targetCenter.x) + (c1.y - targetCenter.y) * (c1.y - targetCenter.y)
+            let d2 = (c2.x - targetCenter.x) * (c2.x - targetCenter.x) + (c2.y - targetCenter.y) * (c2.y - targetCenter.y)
+            return d1 < d2
+        })
+
+        return closest ?? fallback
+    }
+
+    static func resolveOrigin(
+        savedOrigin: NSPoint?,
+        anchor: NSRect?,
+        panelSize: NSSize,
+        screens: [ScreenGeometry],
+        fallbackScreen: ScreenGeometry,
+        margin: CGFloat = margin
+    ) -> NSPoint {
+        if let savedOrigin {
+            let proposedRect = NSRect(origin: savedOrigin, size: panelSize)
+            let targetScreen = bestScreen(for: proposedRect, in: screens, fallback: fallbackScreen)
+            return clampedOrigin(
+                proposed: savedOrigin,
+                panelSize: panelSize,
+                visibleFrame: targetScreen.visibleFrame,
+                margin: margin
+            )
+        }
+
+        if let anchor {
+            let targetScreen = screens.first(where: { $0.frame.intersects(anchor) }) ?? fallbackScreen
+            return origin(
+                anchor: anchor,
+                panelSize: panelSize,
+                visibleFrame: targetScreen.visibleFrame,
+                margin: margin
+            )
+        }
+
+        let centerOrigin = NSPoint(
+            x: fallbackScreen.visibleFrame.midX - panelSize.width / 2,
+            y: fallbackScreen.visibleFrame.midY - panelSize.height / 2
+        )
+        return clampedOrigin(
+            proposed: centerOrigin,
+            panelSize: panelSize,
+            visibleFrame: fallbackScreen.visibleFrame,
+            margin: margin
+        )
+    }
+}
+
+final class PanelDragHandleNSView: NSView {
+    var hasCustomPosition: Bool = false
+    var onDragEnded: ((NSPoint) -> Void)?
+    var onResetRequested: (() -> Void)?
+
+    private var isHovered: Bool = false
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for trackingArea in trackingAreas {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .activeAlways],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let bgPath = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
+        if isHovered {
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            bgPath.fill()
+        }
+
+        let dotDiameter: CGFloat = 3
+        let spacing: CGFloat = 3
+        let totalWidth = 2 * dotDiameter + spacing
+        let totalHeight = 3 * dotDiameter + 2 * spacing
+
+        let startX = (bounds.width - totalWidth) / 2
+        let startY = (bounds.height - totalHeight) / 2
+
+        let dotColor: NSColor
+        if hasCustomPosition {
+            dotColor = NSColor.systemCyan.withAlphaComponent(isHovered ? 1.0 : 0.8)
+        } else {
+            dotColor = NSColor.secondaryLabelColor.withAlphaComponent(isHovered ? 0.9 : 0.6)
+        }
+        dotColor.setFill()
+
+        for col in 0..<2 {
+            for row in 0..<3 {
+                let x = startX + CGFloat(col) * (dotDiameter + spacing)
+                let y = startY + CGFloat(row) * (dotDiameter + spacing)
+                let dotRect = NSRect(x: x, y: y, width: dotDiameter, height: dotDiameter)
+                let dotPath = NSBezierPath(ovalIn: dotRect)
+                dotPath.fill()
+            }
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onResetRequested?()
+            return
+        }
+        guard let window = self.window else { return }
+        window.performDrag(with: event)
+        onDragEnded?(window.frame.origin)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        let resetItem = NSMenuItem(
+            title: "Reset to Caret Placement",
+            action: #selector(handleResetAction),
+            keyEquivalent: ""
+        )
+        resetItem.target = self
+        resetItem.isEnabled = hasCustomPosition
+        menu.addItem(resetItem)
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func handleResetAction() {
+        onResetRequested?()
+    }
+}
+
+struct PanelDragHandleRepresentable: NSViewRepresentable {
+    var hasCustomPosition: Bool
+    var onDragEnded: ((NSPoint) -> Void)?
+    var onResetPosition: (() -> Void)?
+
+    func makeNSView(context: Context) -> PanelDragHandleNSView {
+        let view = PanelDragHandleNSView()
+        view.hasCustomPosition = hasCustomPosition
+        view.onDragEnded = onDragEnded
+        view.onResetRequested = onResetPosition
+        view.toolTip = hasCustomPosition
+            ? "Drag to move panel • Double-click or right-click to reset to caret"
+            : "Drag to move panel"
+        return view
+    }
+
+    func updateNSView(_ nsView: PanelDragHandleNSView, context: Context) {
+        nsView.hasCustomPosition = hasCustomPosition
+        nsView.onDragEnded = onDragEnded
+        nsView.onResetRequested = onResetPosition
+        nsView.toolTip = hasCustomPosition
+            ? "Drag to move panel • Double-click or right-click to reset to caret"
+            : "Drag to move panel"
+        nsView.needsDisplay = true
+    }
 }
 
 @MainActor
 final class ClipboardPanelController {
     private var panel: ClipboardPanel?
-    private let pickerSize = NSSize(width: 460, height: 300)
+    private let userDefaults: UserDefaults
+    private var currentAnchor: TextAnchor?
+    private var currentTargetApplication: NSRunningApplication?
+    var onPositionChanged: (() -> Void)?
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    var hasCustomPosition: Bool {
+        savedPosition() != nil
+    }
+
+    func savedPosition() -> NSPoint? {
+        guard let dict = userDefaults.dictionary(forKey: ClipboardPanelPlacement.savedPositionKey),
+              let x = dict["x"] as? CGFloat,
+              let y = dict["y"] as? CGFloat else {
+            return nil
+        }
+        return NSPoint(x: x, y: y)
+    }
+
+    func savePosition(_ origin: NSPoint) {
+        userDefaults.set(["x": origin.x, "y": origin.y], forKey: ClipboardPanelPlacement.savedPositionKey)
+        onPositionChanged?()
+    }
+
+    func resetPosition() {
+        userDefaults.removeObject(forKey: ClipboardPanelPlacement.savedPositionKey)
+        onPositionChanged?()
+        if let panel = self.panel, panel.isVisible {
+            repositionToAnchor(panel)
+        }
+    }
+
+    func handlePanelDragged(to rawOrigin: NSPoint) {
+        guard let panel = self.panel else { return }
+        let screens = NSScreen.screens.map(ScreenGeometry.init)
+        let mainScreen = NSScreen.main ?? NSScreen.screens.first!
+        let fallbackScreen = ScreenGeometry(screen: mainScreen)
+        let targetScreen = ClipboardPanelPlacement.bestScreen(
+            for: NSRect(origin: rawOrigin, size: ClipboardPanelPlacement.defaultSize),
+            in: screens,
+            fallback: fallbackScreen
+        )
+        let clamped = ClipboardPanelPlacement.clampedOrigin(
+            proposed: rawOrigin,
+            panelSize: ClipboardPanelPlacement.defaultSize,
+            visibleFrame: targetScreen.visibleFrame
+        )
+        if panel.frame.origin != clamped {
+            panel.setFrameOrigin(clamped)
+        }
+        savePosition(clamped)
+    }
 
     func targetApplication(excluding processIdentifier: pid_t) -> NSRunningApplication? {
         if AXIsProcessTrusted(), let focusedApplication = focusedApplicationElement() {
@@ -82,6 +378,9 @@ final class ClipboardPanelController {
         let textPosition = textAnchor(for: targetApplication)
         let fallbackPosition = textPosition == nil ? fallbackAnchor(for: targetApplication) : nil
         let anchor = textPosition ?? fallbackPosition
+        self.currentAnchor = anchor
+        self.currentTargetApplication = targetApplication
+
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.appearance = appearance.nsAppearance
@@ -89,6 +388,7 @@ final class ClipboardPanelController {
             rootView: ClipboardPanelView(
                 store: store,
                 material: material,
+                initialHasCustomPosition: hasCustomPosition,
                 onPaste: onPaste,
                 onTogglePin: onTogglePin,
                 onPreview: onPreview,
@@ -97,11 +397,13 @@ final class ClipboardPanelController {
                 onSaveGIF: onSaveGIF,
                 onSaveFavorite: onSaveFavorite,
                 onDelete: onDelete,
-                onClose: { [weak self] in self?.close() }
+                onClose: { [weak self] in self?.close() },
+                onPanelDragged: { [weak self] newOrigin in self?.handlePanelDragged(to: newOrigin) },
+                onResetPosition: { [weak self] in self?.resetPosition() }
             )
         )
         panel.contentView?.appearance = appearance.nsAppearance
-        panel.setContentSize(pickerSize)
+        panel.setContentSize(ClipboardPanelPlacement.defaultSize)
         positionPanel(panel, anchor: anchor)
         panel.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
@@ -119,7 +421,7 @@ final class ClipboardPanelController {
 
     private func makePanel() -> ClipboardPanel {
         let panel = ClipboardPanel(
-            contentRect: NSRect(origin: .zero, size: pickerSize),
+            contentRect: NSRect(origin: .zero, size: ClipboardPanelPlacement.defaultSize),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -130,27 +432,42 @@ final class ClipboardPanelController {
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.hidesOnDeactivate = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         return panel
     }
 
     private func positionPanel(_ panel: NSPanel, anchor: TextAnchor?) {
-        guard let anchor else {
-            panel.center()
-            return
-        }
-
-        let screen = anchor.screen
-        let selection = anchor.rect
-        let visibleFrame = screen.visibleFrame
-        let panelSize = pickerSize
-        panel.setFrameOrigin(
-            ClipboardPanelPlacement.origin(
-                anchor: selection,
-                panelSize: panelSize,
-                visibleFrame: visibleFrame
-            )
+        let screens = NSScreen.screens.map(ScreenGeometry.init)
+        let mainScreen = NSScreen.main ?? NSScreen.screens.first!
+        let fallbackScreen = ScreenGeometry(screen: anchor?.screen ?? mainScreen)
+        let resolved = ClipboardPanelPlacement.resolveOrigin(
+            savedOrigin: savedPosition(),
+            anchor: anchor?.rect,
+            panelSize: ClipboardPanelPlacement.defaultSize,
+            screens: screens,
+            fallbackScreen: fallbackScreen
         )
+        panel.setFrameOrigin(resolved)
+    }
+
+    private func repositionToAnchor(_ panel: NSPanel) {
+        let textPosition = textAnchor(for: currentTargetApplication)
+        let fallbackPosition = textPosition == nil ? fallbackAnchor(for: currentTargetApplication) : nil
+        let anchor = textPosition ?? fallbackPosition
+        self.currentAnchor = anchor
+        let screens = NSScreen.screens.map(ScreenGeometry.init)
+        let mainScreen = NSScreen.main ?? NSScreen.screens.first!
+        let fallbackScreen = ScreenGeometry(screen: anchor?.screen ?? mainScreen)
+        let resolved = ClipboardPanelPlacement.resolveOrigin(
+            savedOrigin: nil,
+            anchor: anchor?.rect,
+            panelSize: ClipboardPanelPlacement.defaultSize,
+            screens: screens,
+            fallbackScreen: fallbackScreen
+        )
+        panel.setFrameOrigin(resolved)
     }
 
     private struct TextAnchor {
@@ -492,6 +809,7 @@ final class ClipboardPanelController {
 struct ClipboardPanelView: View {
     @ObservedObject var store: ClipboardStore
     let material: ClipboardMaterial
+    let initialHasCustomPosition: Bool
     let onPaste: (ClipboardItem, ClipboardPasteFormat) -> Void
     let onTogglePin: (ClipboardItem) -> Void
     let onPreview: (ClipboardItem) -> Void
@@ -501,7 +819,10 @@ struct ClipboardPanelView: View {
     let onSaveFavorite: (ClipboardItem) -> Void
     let onDelete: (ClipboardItem) -> Void
     let onClose: () -> Void
+    var onPanelDragged: ((NSPoint) -> Void)? = nil
+    var onResetPosition: (() -> Void)? = nil
 
+    @State private var hasCustomPosition: Bool
     @State private var selectedID: UUID?
     @State private var searchQuery = ""
     @State private var typeFilter: ClipboardHistoryTypeFilter = .all
@@ -512,104 +833,65 @@ struct ClipboardPanelView: View {
     @State private var isPresented = false
     @FocusState private var isSearchFocused: Bool
 
-    private let visibleListHeight: CGFloat = 186
+    init(
+        store: ClipboardStore,
+        material: ClipboardMaterial,
+        initialHasCustomPosition: Bool = false,
+        onPaste: @escaping (ClipboardItem, ClipboardPasteFormat) -> Void,
+        onTogglePin: @escaping (ClipboardItem) -> Void,
+        onPreview: @escaping (ClipboardItem) -> Void,
+        onEdit: @escaping (ClipboardItem) -> Void,
+        onExtractText: @escaping (ClipboardItem) -> Void,
+        onSaveGIF: @escaping (ClipboardItem) -> Void,
+        onSaveFavorite: @escaping (ClipboardItem) -> Void,
+        onDelete: @escaping (ClipboardItem) -> Void,
+        onClose: @escaping () -> Void,
+        onPanelDragged: ((NSPoint) -> Void)? = nil,
+        onResetPosition: (() -> Void)? = nil
+    ) {
+        self.store = store
+        self.material = material
+        self.initialHasCustomPosition = initialHasCustomPosition
+        self._hasCustomPosition = State(initialValue: initialHasCustomPosition)
+        self.onPaste = onPaste
+        self.onTogglePin = onTogglePin
+        self.onPreview = onPreview
+        self.onEdit = onEdit
+        self.onExtractText = onExtractText
+        self.onSaveGIF = onSaveGIF
+        self.onSaveFavorite = onSaveFavorite
+        self.onDelete = onDelete
+        self.onClose = onClose
+        self.onPanelDragged = onPanelDragged
+        self.onResetPosition = onResetPosition
+    }
 
     var body: some View {
         let allItems = store.items
         let items = allItems.filter {
             $0.matchesSearch(searchQuery) && $0.matches(historyFilter)
         }
-        let panelShape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        let panelShape = RoundedRectangle(cornerRadius: 20, style: .continuous)
 
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "doc.on.clipboard.fill")
-                    .foregroundStyle(.cyan)
-                Text("clipboard")
-                    .font(.headline)
-                Spacer()
-                Text(searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                     ? "\(allItems.count)"
-                     : "\(items.count)/\(allItems.count)")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                closeButton
-            }
+            headerView(allItemsCount: allItems.count, filteredCount: items.count)
 
             searchField
 
-            if items.isEmpty {
-                ContentUnavailableView(
-                    searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? "Empty history"
-                        : "No matches",
-                    systemImage: searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? "doc.on.clipboard"
-                        : "magnifyingglass"
-                )
-                    .frame(maxWidth: .infinity, minHeight: visibleListHeight)
+            if allItems.isEmpty {
+                emptyHistoryView
+            } else if items.isEmpty {
+                noMatchesView
             } else {
-                List(items) { item in
-                    ClipboardRow(
-                        item: item,
-                        onPaste: onPaste,
-                        onTogglePin: { onTogglePin(item) },
-                        onPreview: { onPreview(item) },
-                        onEdit: { onEdit(item) },
-                        onExtractText: { onExtractText(item) },
-                        onSaveGIF: { onSaveGIF(item) }
-                    )
-                        .contextMenu {
-                            Button(item.isPinned ? "Unpin" : "Pin") { onTogglePin(item) }
-                            if item.hasText {
-                                Button("Save to Library…") { onSaveFavorite(item) }
-                            }
-                            if item.canExtractText {
-                                Button("Edit image") { onEdit(item) }
-                                Button("Extract Text & Copy") { onExtractText(item) }
-                            }
-                            if item.isGIF {
-                                Button("Save GIF…") { onSaveGIF(item) }
-                            }
-                            Button("Quick Look") { onPreview(item) }
-                            Divider()
-                            Button("Paste") { onPaste(item, .original) }
-                            Button("Delete", role: .destructive) { onDelete(item) }
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture { onPaste(item, .original) }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .frame(height: visibleListHeight)
-                .focusEffectDisabled()
-                .onMoveCommand { direction in moveSelection(direction) }
-                .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
-                    switch press.key {
-                    case .upArrow:
-                        moveSelection(.up)
-                    case .downArrow:
-                        moveSelection(.down)
-                    default:
-                        break
-                    }
-                    return .handled
-                }
-                .onKeyPress(.return) {
-                    submitSelection()
-                    return .handled
-                }
-                .onKeyPress(.escape) {
-                    clearSearchOrClose()
-                    return .handled
-                }
+                itemsListView(items: items)
             }
         }
-        .padding(16)
-        .frame(width: 460, height: 300, alignment: .top)
+        .padding(14)
+        .frame(
+            width: ClipboardPanelPlacement.defaultSize.width,
+            height: ClipboardPanelPlacement.defaultSize.height,
+            alignment: .top
+        )
         .clipShape(panelShape)
         .clipboardGlassSurface(in: panelShape, material: material)
         .opacity(isPresented ? 1 : 0)
@@ -638,13 +920,210 @@ struct ClipboardPanelView: View {
         }
     }
 
+    private func headerView(allItemsCount: Int, filteredCount: Int) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.on.clipboard.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.cyan)
+                Text("ClipText")
+                    .font(.headline.weight(.semibold))
+            }
+
+            Spacer()
+
+            PanelDragHandleRepresentable(
+                hasCustomPosition: hasCustomPosition,
+                onDragEnded: { newOrigin in
+                    hasCustomPosition = true
+                    onPanelDragged?(newOrigin)
+                },
+                onResetPosition: {
+                    hasCustomPosition = false
+                    onResetPosition?()
+                }
+            )
+            .frame(width: 44, height: 22)
+            .help(hasCustomPosition
+                  ? "Drag to move panel • Double-click or right-click to reset to caret"
+                  : "Drag to move panel")
+
+            Spacer()
+
+            Text(searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                 ? "\(allItemsCount)"
+                 : "\(filteredCount)/\(allItemsCount)")
+                .font(.caption2.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+
+            closeButton
+        }
+        .contextMenu {
+            if hasCustomPosition {
+                Button("Reset to Caret Placement") {
+                    hasCustomPosition = false
+                    onResetPosition?()
+                }
+            }
+        }
+    }
+
+    private var emptyHistoryView: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "doc.on.clipboard")
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 4) {
+                Text("Your clipboard is empty")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                Text("Copied text, images, and files will appear here.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 6) {
+                Text("Extract text from screen:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 2) {
+                    Text("⌥⇧T")
+                        .font(.caption.weight(.semibold).monospaced())
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .foregroundStyle(.primary)
+            }
+            .padding(.top, 4)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, minHeight: ClipboardPanelPlacement.visibleListHeight)
+    }
+
+    private var noMatchesView: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 4) {
+                Text("No matches")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                if !searchQuery.isEmpty {
+                    Text("No clipboard items match “\(searchQuery)”")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text("No clipboard items match active filters.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                if !searchQuery.isEmpty {
+                    Button("Clear search") {
+                        searchQuery = ""
+                        isSearchFocused = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                if !historyFilter.isDefault {
+                    Button("Reset filters") {
+                        resetFilters()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.top, 4)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, minHeight: ClipboardPanelPlacement.visibleListHeight)
+    }
+
+    private func itemsListView(items: [ClipboardItem]) -> some View {
+        List(items) { item in
+            ClipboardRow(
+                item: item,
+                isSelected: selectedID == item.id,
+                onPaste: onPaste,
+                onTogglePin: { onTogglePin(item) },
+                onPreview: { onPreview(item) },
+                onEdit: { onEdit(item) },
+                onExtractText: { onExtractText(item) },
+                onSaveGIF: { onSaveGIF(item) }
+            )
+            .contextMenu {
+                Button(item.isPinned ? "Unpin" : "Pin") { onTogglePin(item) }
+                if item.hasText {
+                    Button("Save to Library…") { onSaveFavorite(item) }
+                }
+                if item.canExtractText {
+                    Button("Edit image") { onEdit(item) }
+                    Button("Extract Text & Copy") { onExtractText(item) }
+                }
+                if item.isGIF {
+                    Button("Save GIF…") { onSaveGIF(item) }
+                }
+                Button("Quick Look") { onPreview(item) }
+                Divider()
+                Button("Paste") { onPaste(item, .original) }
+                Button("Delete", role: .destructive) { onDelete(item) }
+            }
+            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .frame(height: ClipboardPanelPlacement.visibleListHeight)
+        .focusEffectDisabled()
+        .onMoveCommand { direction in moveSelection(direction) }
+        .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
+            switch press.key {
+            case .upArrow:
+                moveSelection(.up)
+            case .downArrow:
+                moveSelection(.down)
+            default:
+                break
+            }
+            return .handled
+        }
+        .onKeyPress(.return) {
+            submitSelection()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            clearSearchOrClose()
+            return .handled
+        }
+    }
+
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
 
             TextField("Search history", text: $searchQuery)
                 .textFieldStyle(.plain)
+                .font(.body)
                 .focused($isSearchFocused)
                 .onKeyPress(keys: [.upArrow, .downArrow], phases: [.down, .repeat]) { press in
                     switch press.key {
@@ -684,11 +1163,14 @@ struct ClipboardPanelView: View {
             filterMenu
         }
         .padding(.horizontal, 10)
-        .frame(height: 32)
-        .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(height: 34)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
         }
         .accessibilityElement(children: .contain)
     }
@@ -746,17 +1228,25 @@ struct ClipboardPanelView: View {
                 }
             }
         } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: historyFilter.isDefault
                     ? "line.3.horizontal.decrease.circle"
                     : "line.3.horizontal.decrease.circle.fill")
                 if historyFilter.activeFilterCount > 0 {
                     Text("\(historyFilter.activeFilterCount)")
-                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .font(.caption2.weight(.bold).monospacedDigit())
                 }
             }
-            .foregroundStyle(historyFilter.isDefault ? Color.secondary : Color.accentColor)
-            .frame(width: 28, height: 28)
+            .font(.system(size: 13))
+            .foregroundStyle(historyFilter.isDefault ? Color.secondary : Color.cyan)
+            .padding(.horizontal, historyFilter.isDefault ? 4 : 6)
+            .padding(.vertical, 3)
+            .background(
+                historyFilter.isDefault
+                    ? Color.clear
+                    : Color.cyan.opacity(0.14),
+                in: Capsule()
+            )
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
@@ -779,7 +1269,7 @@ struct ClipboardPanelView: View {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.semibold))
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
             }
             .buttonStyle(.glass)
             .accessibilityLabel("Close")
@@ -787,8 +1277,9 @@ struct ClipboardPanelView: View {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.caption.weight(.semibold))
-                    .frame(width: 28, height: 28)
-                    .background(Color.primary.opacity(0.08), in: Circle())
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color.primary.opacity(0.07), in: Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close")
@@ -855,6 +1346,7 @@ struct ClipboardPanelView: View {
 
 private struct ClipboardRow: View {
     let item: ClipboardItem
+    let isSelected: Bool
     let onPaste: (ClipboardItem, ClipboardPasteFormat) -> Void
     let onTogglePin: () -> Void
     let onPreview: () -> Void
@@ -862,102 +1354,138 @@ private struct ClipboardRow: View {
     let onExtractText: () -> Void
     let onSaveGIF: () -> Void
 
-    @State private var isHovered = false
+    @State private var isRowHovered = false
 
     var body: some View {
         HStack(spacing: 10) {
-            if let imageData = item.imageData, let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                Image(systemName: iconName)
-                    .font(.title2)
-                    .frame(width: 48, height: 48)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                    .foregroundStyle(.tint)
-            }
+            // Main content area: clicking here pastes the item
+            Button {
+                onPaste(item, .original)
+            } label: {
+                HStack(spacing: 12) {
+                    thumbnailView
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.preview)
-                    .lineLimit(2)
-                    .font(.body)
-                Text(metadataLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            SmartPasteMenu(
-                item: item,
-                onPaste: onPaste,
-                onExtractText: onExtractText
-            )
-            Button(action: onPreview) {
-                Image(systemName: "eye")
-                    .font(.system(size: 15, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.primary.opacity(isHovered ? 0.95 : 0.72))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-                    .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.preview)
+                            .lineLimit(2)
+                            .font(.system(.body, design: .default))
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+
+                        metadataView
+                    }
+
+                    Spacer(minLength: 4)
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Quick Look")
-            .accessibilityLabel("Quick Look")
-            if item.isGIF {
-                Button(action: onSaveGIF) {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 15, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Color.primary.opacity(isHovered ? 0.95 : 0.72))
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                        .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
+
+            // Independent action buttons area: clicking here never triggers paste
+            HStack(spacing: 4) {
+                SmartPasteMenu(
+                    item: item,
+                    onPaste: onPaste,
+                    onExtractText: onExtractText
+                )
+
+                RowActionButton(
+                    systemImage: "eye",
+                    title: "Quick Look",
+                    action: onPreview
+                )
+
+                if item.isGIF {
+                    RowActionButton(
+                        systemImage: "square.and.arrow.down",
+                        title: "Save GIF",
+                        action: onSaveGIF
+                    )
+                }
+
+                if item.hasImage && !item.isGIF {
+                    RowActionButton(
+                        systemImage: "pencil",
+                        title: "Edit image",
+                        action: onEdit
+                    )
+                }
+
+                Button(action: onTogglePin) {
+                    Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(item.isPinned ? Color.cyan : Color.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(item.isPinned ? Color.cyan.opacity(0.14) : Color.clear)
+                        )
                 }
                 .buttonStyle(.plain)
-                .help("Save GIF")
-                .accessibilityLabel("Save GIF")
+                .help(item.isPinned ? "Unpin" : "Pin")
+                .accessibilityLabel(item.isPinned ? "Unpin" : "Pin")
             }
-            if item.hasImage && !item.isGIF {
-                Button(action: onEdit) {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 15, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Color.primary.opacity(isHovered ? 0.95 : 0.72))
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                        .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
-                }
-                .buttonStyle(.plain)
-                .help("Edit image")
-                .accessibilityLabel("Edit image")
-            }
-            Button(action: onTogglePin) {
-                Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 15, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(item.isPinned ? Color.cyan : Color.primary.opacity(isHovered ? 0.95 : 0.72))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-                    .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
-            }
-            .buttonStyle(.plain)
-            .help(item.isPinned ? "Unpin" : "Pin")
         }
-        .padding(.vertical, 4)
-        .frame(height: 64)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(
+                    isSelected
+                        ? Color.accentColor.opacity(0.12)
+                        : (isRowHovered ? Color.primary.opacity(0.05) : Color.clear)
+                )
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isHovered ? Color.primary.opacity(0.32) : .clear, lineWidth: 1)
+            if isSelected {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.accentColor.opacity(0.28), lineWidth: 1)
+            }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
-                isHovered = hovering
+                isRowHovered = hovering
             }
         }
+    }
+
+    @ViewBuilder
+    private var thumbnailView: some View {
+        if let imageData = item.imageData, let nsImage = NSImage(data: imageData) {
+            Image(nsImage: nsImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                }
+        } else {
+            Image(systemName: iconName)
+                .font(.system(size: 18))
+                .frame(width: 44, height: 44)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .foregroundStyle(Color.cyan)
+        }
+    }
+
+    private var metadataView: some View {
+        HStack(spacing: 6) {
+            if item.isPinned {
+                Label("Pinned", systemImage: "pin.fill")
+                    .foregroundStyle(.cyan)
+            }
+            Text(item.kindLabel)
+                .foregroundStyle(.secondary)
+            if let app = item.sourceApplicationLabel {
+                Text("•")
+                    .foregroundStyle(.tertiary)
+                Text(app)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption2)
     }
 
     private var iconName: String {
@@ -965,11 +1493,32 @@ private struct ClipboardRow: View {
         if item.hasImage { return "photo" }
         return "text.alignleft"
     }
+}
 
-    private var metadataLabel: String {
-        [item.kindLabel, item.sourceApplicationLabel]
-            .compactMap { $0 }
-            .joined(separator: " • ")
+private struct RowActionButton: View {
+    let systemImage: String
+    let title: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isHovered ? Color.primary : Color.secondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(title)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 
@@ -977,6 +1526,8 @@ private struct SmartPasteMenu: View {
     let item: ClipboardItem
     let onPaste: (ClipboardItem, ClipboardPasteFormat) -> Void
     let onExtractText: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         Menu {
@@ -999,17 +1550,22 @@ private struct SmartPasteMenu: View {
             }
         } label: {
             Image(systemName: "wand.and.stars")
-                .font(.system(size: 15, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.cyan)
-                .frame(width: 30, height: 30)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isHovered ? Color.cyan.opacity(0.12) : Color.clear)
+                )
                 .contentShape(Rectangle())
-                .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
         }
         .menuStyle(.borderlessButton)
         .buttonStyle(.plain)
         .accessibilityLabel("Smart Paste")
         .help("Smart Paste")
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 

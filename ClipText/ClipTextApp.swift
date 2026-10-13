@@ -129,6 +129,14 @@ struct ClipTextApp: App {
                 Label("Settings…", systemImage: "gearshape")
             }
 
+            if appState.hasCustomPanelPosition {
+                Button {
+                    appState.resetPanelPosition()
+                } label: {
+                    Label("Reset Panel Position to Caret", systemImage: "arrow.counterclockwise")
+                }
+            }
+
             Divider()
 
             Button("Quit") {

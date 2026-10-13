@@ -204,6 +204,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isCapturingStack = false
     @Published private(set) var clipboardStack = ClipboardStack()
     @Published private(set) var requireAuthenticationForPrivateViews = false
+    @Published private(set) var hasCustomPanelPosition = false
 
     @Published var appearance: ClipboardAppearance {
         didSet {
@@ -341,6 +342,13 @@ final class AppState: ObservableObject {
         requireAuthenticationForPrivateViews = UserDefaults.standard.bool(
             forKey: Keys.requireAuthenticationForPrivateViews
         )
+        hasCustomPanelPosition = panelController.hasCustomPosition
+
+        panelController.onPositionChanged = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.hasCustomPanelPosition = self?.panelController.hasCustomPosition ?? false
+            }
+        }
 
         hotKeyManager.onHotKey = { [weak self] in
             self?.showPanel()
@@ -455,6 +463,11 @@ final class AppState: ObservableObject {
             onSaveFavorite: { [weak self] item in self?.saveAsFavorite(item) },
             onDelete: { [weak self] item in self?.deleteItem(item) }
         )
+    }
+
+    func resetPanelPosition() {
+        panelController.resetPosition()
+        hasCustomPanelPosition = panelController.hasCustomPosition
     }
 
     func editImage(_ item: ClipboardItem) {

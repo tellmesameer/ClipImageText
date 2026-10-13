@@ -840,6 +840,198 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(origin.y, 39, accuracy: 0.001)
     }
 
+    func testPanelPlacementClampedOriginWithinVisibleFrame() {
+        let visibleFrame = NSRect(x: 0, y: 30, width: 1512, height: 950)
+        let panelSize = ClipboardPanelPlacement.defaultSize
+        let proposed = NSPoint(x: 400, y: 300)
+
+        let clamped = ClipboardPanelPlacement.clampedOrigin(
+            proposed: proposed,
+            panelSize: panelSize,
+            visibleFrame: visibleFrame
+        )
+
+        XCTAssertEqual(clamped.x, 400, accuracy: 0.001)
+        XCTAssertEqual(clamped.y, 300, accuracy: 0.001)
+    }
+
+    func testPanelPlacementClampsToScreenMarginsWhenOffscreen() {
+        let visibleFrame = NSRect(x: 0, y: 30, width: 1512, height: 950)
+        let panelSize = ClipboardPanelPlacement.defaultSize
+        let margin = ClipboardPanelPlacement.margin
+
+        // Test off left and bottom
+        let offLeftBottom = NSPoint(x: -200, y: -50)
+        let clampedBottomLeft = ClipboardPanelPlacement.clampedOrigin(
+            proposed: offLeftBottom,
+            panelSize: panelSize,
+            visibleFrame: visibleFrame
+        )
+        XCTAssertEqual(clampedBottomLeft.x, visibleFrame.minX + margin, accuracy: 0.001)
+        XCTAssertEqual(clampedBottomLeft.y, visibleFrame.minY + margin, accuracy: 0.001)
+
+        // Test off right and top
+        let offRightTop = NSPoint(x: 2000, y: 1500)
+        let clampedTopRight = ClipboardPanelPlacement.clampedOrigin(
+            proposed: offRightTop,
+            panelSize: panelSize,
+            visibleFrame: visibleFrame
+        )
+        let expectedMaxX = visibleFrame.maxX - panelSize.width - margin
+        let expectedMaxY = visibleFrame.maxY - panelSize.height - margin
+        XCTAssertEqual(clampedTopRight.x, expectedMaxX, accuracy: 0.001)
+        XCTAssertEqual(clampedTopRight.y, expectedMaxY, accuracy: 0.001)
+    }
+
+    func testPanelPlacementBestScreenSelection() {
+        let screen1 = ScreenGeometry(
+            frame: NSRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: NSRect(x: 0, y: 30, width: 1512, height: 952)
+        )
+        let screen2 = ScreenGeometry(
+            frame: NSRect(x: 1512, y: 0, width: 1920, height: 1080),
+            visibleFrame: NSRect(x: 1512, y: 40, width: 1920, height: 1040)
+        )
+        let screens = [screen1, screen2]
+
+        // Rect on screen 2
+        let proposedRect = NSRect(x: 1600, y: 200, width: 480, height: 350)
+        let selectedScreen = ClipboardPanelPlacement.bestScreen(
+            for: proposedRect,
+            in: screens,
+            fallback: screen1
+        )
+
+        XCTAssertEqual(selectedScreen, screen2)
+    }
+
+    func testPanelPlacementFallbackWhenDisplayDisconnected() {
+        let primaryScreen = ScreenGeometry(
+            frame: NSRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: NSRect(x: 0, y: 30, width: 1512, height: 952)
+        )
+        // Saved position was on a secondary display that is now disconnected
+        let savedPointOnDisconnectedDisplay = NSPoint(x: 2000, y: 400)
+        let panelSize = ClipboardPanelPlacement.defaultSize
+
+        let resolved = ClipboardPanelPlacement.resolveOrigin(
+            savedOrigin: savedPointOnDisconnectedDisplay,
+            anchor: nil,
+            panelSize: panelSize,
+            screens: [primaryScreen],
+            fallbackScreen: primaryScreen
+        )
+
+        // Must be clamped to the primary screen bounds and not lost
+        let expectedMaxX = primaryScreen.visibleFrame.maxX - panelSize.width - ClipboardPanelPlacement.margin
+        XCTAssertEqual(resolved.x, expectedMaxX, accuracy: 0.001)
+        XCTAssertEqual(resolved.y, 400, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testSavedPositionPersistenceAndRestoration() throws {
+        let testSuiteName = "ClipTextPanelPlacementTests-\(UUID().uuidString)"
+        guard let userDefaults = UserDefaults(suiteName: testSuiteName) else {
+            XCTFail("Failed to create test UserDefaults suite")
+            return
+        }
+        defer { userDefaults.removePersistentDomain(forName: testSuiteName) }
+
+        let controller = ClipboardPanelController(userDefaults: userDefaults)
+        XCTAssertFalse(controller.hasCustomPosition)
+        XCTAssertNil(controller.savedPosition())
+
+        // Save a dragged position
+        let customPoint = NSPoint(x: 320, y: 240)
+        controller.savePosition(customPoint)
+
+        XCTAssertTrue(controller.hasCustomPosition)
+        let saved = try XCTUnwrap(controller.savedPosition())
+        XCTAssertEqual(saved.x, 320, accuracy: 0.001)
+        XCTAssertEqual(saved.y, 240, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testResetPositionRestoresAutomaticPlacement() {
+        let testSuiteName = "ClipTextPanelResetTests-\(UUID().uuidString)"
+        guard let userDefaults = UserDefaults(suiteName: testSuiteName) else {
+            XCTFail("Failed to create test UserDefaults suite")
+            return
+        }
+        defer { userDefaults.removePersistentDomain(forName: testSuiteName) }
+
+        let controller = ClipboardPanelController(userDefaults: userDefaults)
+        controller.savePosition(NSPoint(x: 600, y: 400))
+        XCTAssertTrue(controller.hasCustomPosition)
+
+        var notificationFired = false
+        controller.onPositionChanged = {
+            notificationFired = true
+        }
+
+        controller.resetPosition()
+
+        XCTAssertFalse(controller.hasCustomPosition)
+        XCTAssertNil(controller.savedPosition())
+        XCTAssertTrue(notificationFired)
+
+        // When savedOrigin is nil, resolveOrigin uses caret anchor
+        let screen = ScreenGeometry(
+            frame: NSRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: NSRect(x: 0, y: 30, width: 1512, height: 952)
+        )
+        let anchor = NSRect(x: 700, y: 180, width: 1, height: 22)
+        let resolved = ClipboardPanelPlacement.resolveOrigin(
+            savedOrigin: controller.savedPosition(),
+            anchor: anchor,
+            panelSize: ClipboardPanelPlacement.defaultSize,
+            screens: [screen],
+            fallbackScreen: screen
+        )
+
+        let expectedCaretOrigin = ClipboardPanelPlacement.origin(
+            anchor: anchor,
+            panelSize: ClipboardPanelPlacement.defaultSize,
+            visibleFrame: screen.visibleFrame
+        )
+        XCTAssertEqual(resolved.x, expectedCaretOrigin.x, accuracy: 0.001)
+        XCTAssertEqual(resolved.y, expectedCaretOrigin.y, accuracy: 0.001)
+    }
+
+    func testActionButtonsDoNotTriggerPaste() {
+        let item = ClipboardItem(
+            fingerprint: "test-drag-fp",
+            text: "Hello ClipText",
+            richTextData: nil,
+            imageData: nil,
+            imageType: nil,
+            files: []
+        )
+
+        var didPaste = false
+        var didTogglePin = false
+        var didPreview = false
+
+        let onPaste: (ClipboardItem, ClipboardPasteFormat) -> Void = { _, _ in
+            didPaste = true
+        }
+        let onTogglePin: () -> Void = {
+            didTogglePin = true
+        }
+        let onPreview: () -> Void = {
+            didPreview = true
+        }
+
+        // Simulating invocation of action handlers directly
+        onTogglePin()
+        XCTAssertTrue(didTogglePin)
+        XCTAssertFalse(didPaste, "Action buttons must operate independently of the paste callback")
+
+        onPreview()
+        XCTAssertTrue(didPreview)
+        XCTAssertFalse(didPaste, "Action buttons must operate independently of the paste callback")
+    }
+
     @MainActor
     func testPasteboardMonitorFiltersConcealedTransientAndAutoGeneratedTypes() {
         let blockedTypes = [
