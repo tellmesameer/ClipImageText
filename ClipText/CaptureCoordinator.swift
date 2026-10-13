@@ -10,6 +10,19 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+enum CaptureState: Equatable {
+    case idle
+    case selecting
+    case recognizing
+    case copied(count: Int)
+    case noTextFound
+    case screenRecordingRequired
+    case cancelled
+    case timedOut
+    case displayUnavailable
+    case failed(String)
+}
+
 @MainActor
 final class CaptureCoordinator: ObservableObject {
     private let screenCapture: ScreenCaptureService
@@ -21,10 +34,15 @@ final class CaptureCoordinator: ObservableObject {
     private weak var store: ClipboardStore?
     private weak var monitor: PasteboardMonitor?
 
+    @Published private(set) var captureState: CaptureState = .idle
     @Published private(set) var isSelecting: Bool = false
     @Published private(set) var isProcessing: Bool = false
     @Published private(set) var canRetry: Bool = false
+    @Published private(set) var canCopyAgain: Bool = false
     @Published var statusMessage: String?
+
+    private(set) var lastRecognizedText: String?
+    private(set) var lastSourceApplication: ClipboardSourceApplication?
 
     init(
         store: ClipboardStore,
@@ -61,13 +79,19 @@ final class CaptureCoordinator: ObservableObject {
 
         // Checking access is non-prompting. The user chooses when to open System Settings.
         guard permissionsManager.hasScreenRecordingPermission else {
+            captureState = .screenRecordingRequired
             statusMessage = CaptureRecovery.screenRecordingRequired
             canRetry = true
+            canCopyAgain = false
+            SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Screen recording required")
             return
         }
 
-        statusMessage = "Select a screen region to recognize."
+        statusMessage = "Select an area."
+        captureState = .selecting
         canRetry = false
+        canCopyAgain = false
+        SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Capture session started")
 
         let previousApp = NSWorkspace.shared.frontmostApplication
         isSelecting = true
@@ -83,7 +107,11 @@ final class CaptureCoordinator: ObservableObject {
             onCancel: { [weak self] in
                 guard let self else { return }
                 self.isSelecting = false
-                self.statusMessage = "Screen OCR cancelled."
+                self.captureState = .cancelled
+                self.statusMessage = "Capture cancelled."
+                self.canRetry = false
+                self.canCopyAgain = false
+                SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Capture cancelled by user")
                 previousApp?.activate()
             }
         )
@@ -93,7 +121,38 @@ final class CaptureCoordinator: ObservableObject {
         startCapture()
     }
 
+    func copyAgain() {
+        guard let text = lastRecognizedText, !text.isEmpty else { return }
+        let snapshot = ClipboardSnapshot(
+            text: text,
+            richTextData: nil,
+            imageData: nil,
+            imageType: nil,
+            fileURLs: []
+        )
+        monitor?.suppressFingerprint(snapshot.fingerprint)
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        monitor?.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
+        store?.ingest(snapshot, sourceApplication: lastSourceApplication)
+        statusMessage = "Copied \(text.count) characters."
+        selectionController.showStatus("Copied again", on: nil)
+        SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Copied recognized text again")
+    }
+
     private func processCapture(rect: CGRect, on screen: NSScreen?, previousApp: NSRunningApplication?) async {
+        guard !rect.isNull, !rect.isInfinite,
+              !rect.origin.x.isNaN, !rect.origin.y.isNaN,
+              !rect.size.width.isNaN, !rect.size.height.isNaN,
+              rect.width > 2, rect.height > 2 else {
+            captureState = .cancelled
+            statusMessage = "Capture cancelled."
+            canRetry = false
+            canCopyAgain = false
+            previousApp?.activate()
+            return
+        }
+
         let displays = displayProvider()
         let availableDisplays: [DisplayInfo]
         if !displays.isEmpty {
@@ -117,8 +176,12 @@ final class CaptureCoordinator: ObservableObject {
                 )
             ]
         } else {
-            statusMessage = CaptureRecovery.noDisplayAvailable
+            captureState = .displayUnavailable
+            statusMessage = "Display unavailable."
             canRetry = true
+            canCopyAgain = false
+            selectionController.showStatus("Display unavailable", on: screen)
+            SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Display unavailable")
             previousApp?.activate()
             return
         }
@@ -132,7 +195,8 @@ final class CaptureCoordinator: ObservableObject {
         let targetScreen = screen ?? NSScreen.screens.first(where: { $0.displayID == targetDisplay.displayID }) ?? NSScreen.main
 
         isProcessing = true
-        statusMessage = "Capturing selected region…"
+        captureState = .recognizing
+        statusMessage = "Recognizing…"
         defer {
             isProcessing = false
             previousApp?.activate()
@@ -145,7 +209,7 @@ final class CaptureCoordinator: ObservableObject {
             }
 
             // 2. Perform Apple Vision OCR
-            statusMessage = "Recognizing text…"
+            statusMessage = "Recognizing…"
             let configuration = OCRConfiguration.accurate
             let result = try await withTimeout(60) { [ocrManager, image] in
                 try await ocrManager.recognizeText(from: image, configuration: configuration)
@@ -153,9 +217,12 @@ final class CaptureCoordinator: ObservableObject {
 
             let recognizedText = result.text.trimmingWhitespaceAndNewlines()
             guard !recognizedText.isEmpty else {
-                statusMessage = CaptureRecovery.noTextFound
+                captureState = .noTextFound
+                statusMessage = "No text found."
                 canRetry = true
+                canCopyAgain = false
                 selectionController.showStatus("No text found", on: targetScreen)
+                SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "No text found in region")
                 return
             }
 
@@ -181,17 +248,42 @@ final class CaptureCoordinator: ObservableObject {
                 guard let bundleID = app.bundleIdentifier else { return nil }
                 return ClipboardSourceApplication(bundleIdentifier: bundleID, name: app.localizedName ?? bundleID)
             }
+            lastSourceApplication = sourceApp
+            lastRecognizedText = recognizedText
             store?.ingest(snapshot, sourceApplication: sourceApp)
 
-            // 4. Show success indicator HUD pill
+            // 4. Update user-facing state & HUD
             canRetry = false
-            statusMessage = "Copied \(recognizedText.count) characters to clipboard and history."
+            canCopyAgain = true
+            captureState = .copied(count: recognizedText.count)
+            statusMessage = "Copied \(recognizedText.count) characters."
             selectionController.showStatus("Copied", on: targetScreen)
+            SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Copied \(recognizedText.count) characters")
+        } catch let error as ClipTextError {
+            switch error {
+            case .operationTimedOut:
+                captureState = .timedOut
+                statusMessage = "Capture timed out."
+                canRetry = true
+                canCopyAgain = false
+                selectionController.showStatus("Capture timed out", on: targetScreen)
+                SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "Capture timed out")
+            default:
+                captureState = .failed(error.localizedDescription)
+                statusMessage = "OCR failed."
+                canRetry = true
+                canCopyAgain = false
+                selectionController.showStatus("OCR Failed", on: targetScreen)
+                SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "OCR failed")
+            }
         } catch {
             Logger.shared.error("Screen OCR failed: \(error.localizedDescription)")
-            statusMessage = CaptureRecovery.recognitionFailed
+            captureState = .failed(error.localizedDescription)
+            statusMessage = "OCR failed."
             canRetry = true
+            canCopyAgain = false
             selectionController.showStatus("OCR Failed", on: targetScreen)
+            SanitizedDiagnosticsLog.shared.log(category: "ScreenOCR", message: "OCR failed")
         }
     }
 }

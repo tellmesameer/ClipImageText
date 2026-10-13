@@ -1,14 +1,27 @@
 import Carbon.HIToolbox
 import Foundation
 
-final class GlobalHotKeyManager {
+protocol GlobalHotKeyManaging: AnyObject {
+    var onHotKey: (() -> Void)? { get set }
+    var currentConfiguration: HotKeyConfiguration? { get }
+    var isRegistered: Bool { get }
+    @discardableResult
+    func register(_ configuration: HotKeyConfiguration?) -> Bool
+    func stop()
+}
+
+final class GlobalHotKeyManager: GlobalHotKeyManaging {
     var onHotKey: (() -> Void)?
+    private(set) var currentConfiguration: HotKeyConfiguration?
+
+    var isRegistered: Bool {
+        hotKeyRef != nil
+    }
 
     private static let signature = OSType(0x434C4950)
     private let identifier: UInt32
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
-    private var currentConfiguration: HotKeyConfiguration?
 
     init(identifier: UInt32 = 1) {
         self.identifier = identifier
@@ -46,6 +59,10 @@ final class GlobalHotKeyManager {
 
     @discardableResult
     func register(_ configuration: HotKeyConfiguration?) -> Bool {
+        register(configuration, isRollback: false)
+    }
+
+    private func register(_ configuration: HotKeyConfiguration?, isRollback: Bool) -> Bool {
         let previous = currentConfiguration
         unregisterHotKey()
 
@@ -54,7 +71,7 @@ final class GlobalHotKeyManager {
             return true
         }
 
-        let identifier = EventHotKeyID(signature: Self.signature, id: identifier)
+        let identifier = EventHotKeyID(signature: Self.signature, id: self.identifier)
         var newRef: EventHotKeyRef?
         let status = RegisterEventHotKey(
             configuration.keyCode,
@@ -65,7 +82,11 @@ final class GlobalHotKeyManager {
             &newRef
         )
         guard status == noErr else {
-            if let previous { _ = register(previous) }
+            if let previous, !isRollback {
+                _ = register(previous, isRollback: true)
+            } else {
+                currentConfiguration = nil
+            }
             return false
         }
         hotKeyRef = newRef
@@ -79,6 +100,7 @@ final class GlobalHotKeyManager {
             RemoveEventHandler(handlerRef)
             self.handlerRef = nil
         }
+        currentConfiguration = nil
     }
 
     deinit { stop() }

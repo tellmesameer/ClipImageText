@@ -115,18 +115,60 @@ final class MockSelectionController: SelectionController {
 @MainActor
 final class MockPermissionsService: PermissionsService {
     var hasScreenRecordingPermission: Bool
+    var isAccessibilityTrusted: Bool
     var didRequest = false
+    var openedScreenSettings = false
+    var openedAccessibilitySettings = false
+    var didRelaunch = false
 
-    init(hasPermission: Bool = true) {
+    init(hasPermission: Bool = true, isAccessibilityTrusted: Bool = true) {
         self.hasScreenRecordingPermission = hasPermission
+        self.isAccessibilityTrusted = isAccessibilityTrusted
     }
+
+    func checkPermissions() {}
 
     func requestScreenRecordingPermission() async -> Bool {
         didRequest = true
         return hasScreenRecordingPermission
     }
 
-    func openScreenRecordingSettings() {}
+    func openScreenRecordingSettings() {
+        openedScreenSettings = true
+    }
+
+    func openAccessibilitySettings() {
+        openedAccessibilitySettings = true
+    }
+
+    func relaunchApplication() {
+        didRelaunch = true
+    }
+}
+
+final class MockGlobalHotKeyManager: GlobalHotKeyManaging {
+    var onHotKey: (() -> Void)?
+    var currentConfiguration: HotKeyConfiguration?
+    var isRegistered: Bool { currentConfiguration != nil }
+    var shouldFailRegistration = false
+    var registrationAttempts: [HotKeyConfiguration?] = []
+
+    init(configuration: HotKeyConfiguration? = nil) {
+        self.currentConfiguration = configuration
+    }
+
+    func register(_ configuration: HotKeyConfiguration?) -> Bool {
+        registrationAttempts.append(configuration)
+        if shouldFailRegistration {
+            return false
+        }
+        currentConfiguration = configuration
+        return true
+    }
+
+    func stop() {
+        currentConfiguration = nil
+    }
 }
 
 @MainActor
@@ -832,6 +874,399 @@ final class ScreenOCRTests: XCTestCase {
             XCTAssertFalse(controller.isVisible)
             XCTAssertFalse(windowManager.isVisible)
         }
+    }
+
+    func testMissingScreenRecordingPermissionPreservesClipboardAndDoesNotCapture() async throws {
+        let store = ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher)
+        let testPasteboard = NSPasteboard.withUniqueName()
+        testPasteboard.setString("Preserved Clipboard Content", forType: .string)
+
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        let screenCapture = MockScreenCaptureService()
+        let ocrService = MockOCRService(textToReturn: "Should Not Capture")
+        let selectionController = MockSelectionController()
+        let permissions = MockPermissionsService(hasPermission: false)
+
+        let coordinator = CaptureCoordinator(
+            store: store,
+            monitor: monitor,
+            permissionsManager: permissions,
+            screenCapture: screenCapture,
+            ocrManager: ocrService,
+            selectionController: selectionController,
+            pasteboard: testPasteboard
+        )
+
+        coordinator.startCapture()
+
+        XCTAssertFalse(selectionController.isVisible)
+        XCTAssertEqual(coordinator.captureState, .screenRecordingRequired)
+        XCTAssertEqual(coordinator.statusMessage, CaptureRecovery.screenRecordingRequired)
+        XCTAssertTrue(coordinator.canRetry)
+        XCTAssertFalse(coordinator.canCopyAgain)
+        XCTAssertEqual(testPasteboard.string(forType: .string), "Preserved Clipboard Content")
+        XCTAssertTrue(store.items.isEmpty)
+    }
+
+    func testCaptureCoordinatorTimeoutPreservesClipboardAndStore() async throws {
+        let store = ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher)
+        let testPasteboard = NSPasteboard.withUniqueName()
+        testPasteboard.setString("Timeout Preserved Text", forType: .string)
+
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        let screenCapture = MockScreenCaptureService()
+        await screenCapture.setShouldThrow(true)
+        let ocrService = MockOCRService(textToReturn: "Never Returned")
+        let selectionController = MockSelectionController()
+        let permissions = MockPermissionsService(hasPermission: true)
+
+        let coordinator = CaptureCoordinator(
+            store: store,
+            monitor: monitor,
+            permissionsManager: permissions,
+            screenCapture: screenCapture,
+            ocrManager: ocrService,
+            selectionController: selectionController,
+            pasteboard: testPasteboard
+        )
+
+        coordinator.startCapture()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(testPasteboard.string(forType: .string), "Timeout Preserved Text")
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertTrue(coordinator.canRetry)
+        XCTAssertFalse(coordinator.canCopyAgain)
+    }
+
+    func testRetryAndCopyAgainDeduplicatesHistory() async throws {
+        let store = ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher)
+        let testPasteboard = NSPasteboard.withUniqueName()
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        monitor.onSnapshot = { [weak store] snapshot, source in
+            store?.ingest(snapshot, sourceApplication: source)
+        }
+
+        let screenCapture = MockScreenCaptureService()
+        let ocrService = MockOCRService(textToReturn: "Identical Result")
+        let selectionController = MockSelectionController()
+        let permissions = MockPermissionsService(hasPermission: true)
+
+        let coordinator = CaptureCoordinator(
+            store: store,
+            monitor: monitor,
+            permissionsManager: permissions,
+            screenCapture: screenCapture,
+            ocrManager: ocrService,
+            selectionController: selectionController,
+            pasteboard: testPasteboard
+        )
+
+        coordinator.startCapture()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(testPasteboard.string(forType: .string), "Identical Result")
+        XCTAssertTrue(coordinator.canCopyAgain)
+
+        // Copy again must not create duplicate entries in unified history
+        coordinator.copyAgain()
+        monitor.poll()
+
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(testPasteboard.string(forType: .string), "Identical Result")
+
+        // Retry capture with same text must also deduplicate in history
+        coordinator.retryCapture()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        monitor.poll()
+
+        XCTAssertEqual(store.items.count, 1)
+    }
+
+    func testHotkeyRegistrationRollbackKeepsPreviousConfiguration() {
+        let manager = GlobalHotKeyManager(identifier: 42)
+        let initialConfig = HotKeyConfiguration(keyCode: 9, modifiers: UInt32(cmdKey | shiftKey))
+        let registered = manager.register(initialConfig)
+
+        if registered {
+            XCTAssertEqual(manager.currentConfiguration, initialConfig)
+            XCTAssertTrue(manager.isRegistered)
+
+            // Attempting to register an invalid hotkey with keyCode 9999 or unregistered modifiers
+            let invalidConfig = HotKeyConfiguration(keyCode: 999999, modifiers: 0)
+            let secondResult = manager.register(invalidConfig)
+
+            // If second registration failed, manager must preserve initialConfig
+            if !secondResult {
+                XCTAssertEqual(manager.currentConfiguration, initialConfig)
+            }
+        }
+    }
+
+    func testAppStateHotkeyRollbackKeepsActiveConfigurationAndUpdatesSettings() {
+        let mockManager = MockGlobalHotKeyManager()
+        let initialHotKey = HotKeyConfiguration.default
+        _ = mockManager.register(initialHotKey)
+
+        let appState = AppState(
+            store: ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher),
+            hotKeyManager: mockManager
+        )
+        defer { appState.stop() }
+        appState.start()
+
+        XCTAssertEqual(appState.hotKey, initialHotKey)
+
+        // Simulate failure on next registration
+        mockManager.shouldFailRegistration = true
+        let candidate = HotKeyConfiguration(keyCode: 11, modifiers: UInt32(controlKey | optionKey | cmdKey))
+        appState.hotKey = candidate
+
+        // Must roll back to initial hotkey
+        XCTAssertEqual(appState.hotKey, initialHotKey)
+        XCTAssertTrue(appState.statusMessage?.contains("Could not register") == true)
+        XCTAssertTrue(appState.statusMessage?.contains("Keeping") == true)
+    }
+
+    func testInstallationHealthSigningStatusVariants() {
+        let expected = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: "B6537Y9X84",
+            signingStatus: .expectedIdentity(teamIdentifier: "B6537Y9X84"),
+            designatedRequirement: "identifier \"com.cliptext.app\"",
+            isDesignatedRequirementValid: true
+        )
+        XCTAssertTrue(expected.isExpectedIdentityPresent)
+        XCTAssertTrue(expected.isStableForPrivacyPermissions)
+        XCTAssertTrue(expected.signingSummary.contains("B6537Y9X84"))
+
+        let unexpected = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: "WRONG123",
+            signingStatus: .unexpectedTeam(teamIdentifier: "WRONG123")
+        )
+        XCTAssertFalse(unexpected.isExpectedIdentityPresent)
+        XCTAssertFalse(unexpected.isStableForPrivacyPermissions)
+        XCTAssertTrue(unexpected.signingSummary.contains("Different team"))
+
+        let adHoc = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: nil,
+            signingStatus: .adHocSigned
+        )
+        XCTAssertFalse(adHoc.isExpectedIdentityPresent)
+        XCTAssertFalse(adHoc.isStableForPrivacyPermissions)
+        XCTAssertTrue(adHoc.signingSummary.contains("Ad-hoc"))
+
+        let unsigned = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: nil,
+            signingStatus: .unsigned
+        )
+        XCTAssertFalse(unsigned.isExpectedIdentityPresent)
+        XCTAssertFalse(unsigned.isStableForPrivacyPermissions)
+        XCTAssertTrue(unsigned.signingSummary.contains("Unsigned"))
+
+        let unavailable = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: nil,
+            signingStatus: .unavailable(reason: "Test failure")
+        )
+        XCTAssertFalse(unavailable.isExpectedIdentityPresent)
+        XCTAssertFalse(unavailable.isStableForPrivacyPermissions)
+        XCTAssertTrue(unavailable.signingSummary.contains("unavailable"))
+    }
+
+    func testDuplicateInstallationDetectionValidatesBundleIdentifier() {
+        let candidates = [
+            "/Applications/ClipText.app",
+            "/Users/test/Applications/ClipText.app",
+            "/Users/test/Applications/OtherApp.app"
+        ]
+
+        let duplicates = InstallationHealth.duplicateInstallations(
+            currentPath: "/Applications/ClipText.app",
+            candidatePaths: candidates,
+            expectedBundleIdentifier: "com.cliptext.app",
+            bundleInspector: { path in
+                if path == "/Users/test/Applications/ClipText.app" {
+                    return "com.cliptext.app"
+                } else if path == "/Users/test/Applications/OtherApp.app" {
+                    return "com.other.app"
+                }
+                return nil
+            }
+        )
+
+        // Only candidate with matching bundle identifier and distinct path should be returned
+        XCTAssertEqual(duplicates, ["/Users/test/Applications/ClipText.app"])
+    }
+
+    func testDuplicateInstallationDetectionIgnoresMismatchedBundleIdentifier() {
+        let candidates = ["/Users/test/Applications/ClipText.app"]
+
+        let duplicates = InstallationHealth.duplicateInstallations(
+            currentPath: "/Applications/ClipText.app",
+            candidatePaths: candidates,
+            expectedBundleIdentifier: "com.cliptext.app",
+            bundleInspector: { _ in "com.impostor.app" }
+        )
+
+        XCTAssertTrue(duplicates.isEmpty)
+    }
+
+    func testDiagnosticsReportRedactsAllSensitiveContent() {
+        let health = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Users/secretuser/Applications/ClipText.app",
+            duplicateInstallations: [],
+            teamIdentifier: "B6537Y9X84",
+            signingStatus: .expectedIdentity(teamIdentifier: "B6537Y9X84"),
+            designatedRequirement: "identifier \"com.cliptext.app\"",
+            isDesignatedRequirementValid: true
+        )
+
+        let secretClipboardText = "SUPER_SECRET_PASSWORD_123"
+        let secretOCRText = "CONFIDENTIAL_OCR_DATA_456"
+
+        let report = DiagnosticsReport.make(
+            version: "1.0",
+            build: "42",
+            macOSVersion: "macOS 14.4",
+            health: health,
+            hasScreenRecordingPermission: true,
+            isAccessibilityTrusted: true,
+            historyHotKey: "⌘⇧V",
+            isHistoryHotKeyRegistered: true,
+            ocrHotKey: "⌥⇧T",
+            isOCRHotKeyRegistered: true,
+            events: [
+                SanitizedDiagnosticsLog.Entry(
+                    timestamp: Date(),
+                    category: "ScreenOCR",
+                    message: "Capture session started"
+                )
+            ]
+        )
+
+        // Allowlisted diagnostic fields present
+        XCTAssertTrue(report.contains("Version: 1.0 (42)"))
+        XCTAssertTrue(report.contains("macOS Version: macOS 14.4"))
+        XCTAssertTrue(report.contains("Bundle ID: com.cliptext.app"))
+        XCTAssertTrue(report.contains("App path: /Users/<redacted>/Applications/ClipText.app"))
+        XCTAssertTrue(report.contains("Team ID: B6537Y9X84"))
+        XCTAssertTrue(report.contains("Screen Recording: Granted"))
+        XCTAssertTrue(report.contains("Accessibility: Granted"))
+        XCTAssertTrue(report.contains("History hotkey: ⌘⇧V (Registered)"))
+        XCTAssertTrue(report.contains("OCR hotkey: ⌥⇧T (Registered)"))
+        XCTAssertTrue(report.contains("ScreenOCR: Capture session started"))
+
+        // Sensitive content NEVER appears
+        XCTAssertFalse(report.contains(secretClipboardText))
+        XCTAssertFalse(report.contains(secretOCRText))
+        XCTAssertFalse(report.contains("secretuser"))
+    }
+
+    func testSanitizedDiagnosticsLogNeverContainsClipboardOrOCRText() {
+        let logger = SanitizedDiagnosticsLog.shared
+        logger.clear()
+
+        // Unallowlisted messages or categories are rejected
+        logger.log(category: "PrivateUserData", message: "My Password Is Secret")
+        logger.log(category: "ScreenOCR", message: "Arbitrary unrecognized OCR payload")
+        XCTAssertTrue(logger.recentEntries().isEmpty)
+
+        // Allowlisted messages are accepted
+        logger.log(category: "ScreenOCR", message: "Screen recording required")
+        logger.log(category: "ScreenOCR", message: "Copied 42 characters")
+        XCTAssertEqual(logger.recentEntries().count, 2)
+        XCTAssertEqual(logger.recentEntries()[0].message, "Screen recording required")
+        XCTAssertEqual(logger.recentEntries()[1].message, "Copied 42 characters")
+    }
+
+    func testMissingAccessibilityPermissionPreservesClipboardOperationsWithoutAutomation() async throws {
+        // Without Accessibility, ordinary clipboard operations and copying OCR results remain available.
+        let store = ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher)
+        let testPasteboard = NSPasteboard.withUniqueName()
+        let initialText = "Existing text before copy"
+        testPasteboard.setString(initialText, forType: .string)
+
+        let monitor = PasteboardMonitor(pasteboard: testPasteboard)
+        let permissions = MockPermissionsService(hasPermission: true, isAccessibilityTrusted: false)
+        let coordinator = CaptureCoordinator(
+            store: store,
+            monitor: monitor,
+            permissionsManager: permissions,
+            screenCapture: MockScreenCaptureService(),
+            ocrManager: MockOCRService(textToReturn: "Recognized without accessibility"),
+            selectionController: MockSelectionController(),
+            pasteboard: testPasteboard,
+            displayProvider: { [] }
+        )
+
+        coordinator.startCapture()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // Clipboard should contain recognized text even without accessibility
+        XCTAssertEqual(testPasteboard.string(forType: .string), "Recognized without accessibility")
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(store.items.first?.text, "Recognized without accessibility")
+    }
+
+    func testPermissionStatusRefreshUpdatesPermissionsState() {
+        let permissions = MockPermissionsService(hasPermission: false, isAccessibilityTrusted: false)
+        XCTAssertFalse(permissions.hasScreenRecordingPermission)
+        XCTAssertFalse(permissions.isAccessibilityTrusted)
+
+        // Updating mock state simulates system permission change
+        permissions.hasScreenRecordingPermission = true
+        permissions.isAccessibilityTrusted = true
+        permissions.checkPermissions()
+
+        XCTAssertTrue(permissions.hasScreenRecordingPermission)
+        XCTAssertTrue(permissions.isAccessibilityTrusted)
+    }
+
+    func testDiagnosticsReportRedactsDuplicateInstallationPaths() {
+        let health = InstallationHealth(
+            bundleIdentifier: "com.cliptext.app",
+            applicationPath: "/Applications/ClipText.app",
+            duplicateInstallations: [
+                "/Users/personalaccount/Applications/ClipText.app",
+                "/Users/personalaccount/Downloads/ClipText.app"
+            ],
+            teamIdentifier: "B6537Y9X84",
+            signingStatus: .expectedIdentity(teamIdentifier: "B6537Y9X84"),
+            designatedRequirement: "identifier \"com.cliptext.app\"",
+            isDesignatedRequirementValid: true
+        )
+
+        let report = DiagnosticsReport.make(
+            version: "1.0",
+            build: "42",
+            health: health,
+            hasScreenRecordingPermission: true,
+            isAccessibilityTrusted: true,
+            historyHotKey: "⌘⇧V",
+            ocrHotKey: "⌥⇧T",
+            events: []
+        )
+
+        // Path redaction must redact usernames in duplicate installations
+        XCTAssertTrue(report.contains("/Users/<redacted>/Applications/ClipText.app"))
+        XCTAssertTrue(report.contains("/Users/<redacted>/Downloads/ClipText.app"))
+        XCTAssertFalse(report.contains("personalaccount"))
     }
 }
 

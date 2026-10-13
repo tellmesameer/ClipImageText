@@ -38,6 +38,22 @@ struct ClipTextApp: App {
                 Label("Extract Text from Screen… (\(appState.ocrHotKey.displayString))", systemImage: "text.viewfinder")
             }
 
+            if appState.canRetryScreenOCR {
+                Button {
+                    appState.retryScreenOCR()
+                } label: {
+                    Label("Retry Screen OCR", systemImage: "arrow.clockwise")
+                }
+            }
+
+            if appState.canCopyAgainScreenOCR {
+                Button {
+                    appState.copyAgainScreenOCR()
+                } label: {
+                    Label("Copy Recognized Text Again", systemImage: "doc.on.doc")
+                }
+            }
+
             Button {
                 appState.captureAndAnnotate()
             } label: {

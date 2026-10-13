@@ -80,105 +80,127 @@ final class AppState: ObservableObject {
 
     @Published var hotKey: HotKeyConfiguration {
         didSet {
-            UserDefaults.standard.set(try? JSONEncoder().encode(hotKey), forKey: Keys.hotKey)
             guard hasStarted else {
                 oldHotKey = hotKey
+                persistHotKey(hotKey, key: Keys.hotKey)
                 return
             }
+            guard hotKey != oldHotKey else { return }
             guard !isHotKeyInUse(hotKey, excluding: .history) else {
                 statusMessage = "Hotkeys must be different."
                 hotKey = oldHotKey
                 return
             }
-            if !hotKeyManager.register(hotKey) {
-                statusMessage = "Hotkey unavailable; previous configuration kept."
+            let candidate = hotKey
+            if !hotKeyManager.register(candidate) {
+                statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldHotKey.displayString)."
                 hotKey = oldHotKey
+                SanitizedDiagnosticsLog.shared.log(category: "HotKey", message: "Failed to register history hotkey")
             } else {
-                oldHotKey = hotKey
+                oldHotKey = candidate
+                persistHotKey(candidate, key: Keys.hotKey)
             }
         }
     }
 
     @Published var gifHotKey: HotKeyConfiguration {
         didSet {
-            UserDefaults.standard.set(try? JSONEncoder().encode(gifHotKey), forKey: Keys.gifHotKey)
             guard hasStarted else {
                 oldGIFHotKey = gifHotKey
+                persistHotKey(gifHotKey, key: Keys.gifHotKey)
                 return
             }
+            guard gifHotKey != oldGIFHotKey else { return }
             guard !isHotKeyInUse(gifHotKey, excluding: .gif) else {
                 statusMessage = "Hotkeys must be different."
                 gifHotKey = oldGIFHotKey
                 return
             }
-            if !gifHotKeyManager.register(gifHotKey) {
-                statusMessage = "GIF hotkey unavailable; previous configuration kept."
+            let candidate = gifHotKey
+            if !gifHotKeyManager.register(candidate) {
+                statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldGIFHotKey.displayString)."
                 gifHotKey = oldGIFHotKey
+                SanitizedDiagnosticsLog.shared.log(category: "HotKey", message: "Failed to register GIF hotkey")
             } else {
-                oldGIFHotKey = gifHotKey
+                oldGIFHotKey = candidate
+                persistHotKey(candidate, key: Keys.gifHotKey)
             }
         }
     }
 
     @Published var ocrHotKey: HotKeyConfiguration {
         didSet {
-            UserDefaults.standard.set(try? JSONEncoder().encode(ocrHotKey), forKey: Keys.ocrHotKey)
             guard hasStarted else {
                 oldOCRHotKey = ocrHotKey
+                persistHotKey(ocrHotKey, key: Keys.ocrHotKey)
                 return
             }
+            guard ocrHotKey != oldOCRHotKey else { return }
             guard !isHotKeyInUse(ocrHotKey, excluding: .ocr) else {
                 statusMessage = "Hotkeys must be different."
                 ocrHotKey = oldOCRHotKey
                 return
             }
-            if !ocrHotKeyManager.register(ocrHotKey) {
-                statusMessage = "OCR hotkey unavailable; previous configuration kept."
+            let candidate = ocrHotKey
+            if !ocrHotKeyManager.register(candidate) {
+                statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldOCRHotKey.displayString)."
                 ocrHotKey = oldOCRHotKey
+                SanitizedDiagnosticsLog.shared.log(category: "HotKey", message: "Failed to register OCR hotkey")
             } else {
-                oldOCRHotKey = ocrHotKey
+                oldOCRHotKey = candidate
+                persistHotKey(candidate, key: Keys.ocrHotKey)
             }
         }
     }
 
     @Published var stackStartHotKey: HotKeyConfiguration? {
         didSet {
-            persistOptionalHotKey(stackStartHotKey, key: Keys.stackStartHotKey)
             guard hasStarted else {
                 oldStackStartHotKey = stackStartHotKey
+                persistOptionalHotKey(stackStartHotKey, key: Keys.stackStartHotKey)
                 return
             }
+            guard stackStartHotKey != oldStackStartHotKey else { return }
             guard !isHotKeyInUse(stackStartHotKey, excluding: .stackStart) else {
                 statusMessage = "That hotkey is already in use."
                 stackStartHotKey = oldStackStartHotKey
                 return
             }
-            if !stackStartHotKeyManager.register(stackStartHotKey) {
-                statusMessage = "Hotkey unavailable; previous configuration kept."
+            let candidate = stackStartHotKey
+            if !stackStartHotKeyManager.register(candidate) {
+                let currentStr = oldStackStartHotKey?.displayString ?? "Not set"
+                let candidateStr = candidate?.displayString ?? "Not set"
+                statusMessage = "Could not register shortcut \(candidateStr). Keeping \(currentStr)."
                 stackStartHotKey = oldStackStartHotKey
             } else {
-                oldStackStartHotKey = stackStartHotKey
+                oldStackStartHotKey = candidate
+                persistOptionalHotKey(candidate, key: Keys.stackStartHotKey)
             }
         }
     }
 
     @Published var stackNextHotKey: HotKeyConfiguration? {
         didSet {
-            persistOptionalHotKey(stackNextHotKey, key: Keys.stackNextHotKey)
             guard hasStarted else {
                 oldStackNextHotKey = stackNextHotKey
+                persistOptionalHotKey(stackNextHotKey, key: Keys.stackNextHotKey)
                 return
             }
+            guard stackNextHotKey != oldStackNextHotKey else { return }
             guard !isHotKeyInUse(stackNextHotKey, excluding: .stackNext) else {
                 statusMessage = "That hotkey is already in use."
                 stackNextHotKey = oldStackNextHotKey
                 return
             }
-            if !stackNextHotKeyManager.register(stackNextHotKey) {
-                statusMessage = "Hotkey unavailable; previous configuration kept."
+            let candidate = stackNextHotKey
+            if !stackNextHotKeyManager.register(candidate) {
+                let currentStr = oldStackNextHotKey?.displayString ?? "Not set"
+                let candidateStr = candidate?.displayString ?? "Not set"
+                statusMessage = "Could not register shortcut \(candidateStr). Keeping \(currentStr)."
                 stackNextHotKey = oldStackNextHotKey
             } else {
-                oldStackNextHotKey = stackNextHotKey
+                oldStackNextHotKey = candidate
+                persistOptionalHotKey(candidate, key: Keys.stackNextHotKey)
             }
         }
     }
@@ -257,19 +279,31 @@ final class AppState: ObservableObject {
 
     let store: ClipboardStore
     let snippetStore: SnippetStore
-    let permissionsManager = PermissionsManager()
+    let permissionsManager: PermissionsManager
     let captureCoordinator: CaptureCoordinator
 
     var isDeviceAuthenticationAvailable: Bool {
         authenticationService.isAvailable
     }
 
-    private let monitor = PasteboardMonitor()
-    private let hotKeyManager = GlobalHotKeyManager(identifier: 1)
-    private let gifHotKeyManager = GlobalHotKeyManager(identifier: 2)
-    private let stackStartHotKeyManager = GlobalHotKeyManager(identifier: 3)
-    private let stackNextHotKeyManager = GlobalHotKeyManager(identifier: 4)
-    private let ocrHotKeyManager = GlobalHotKeyManager(identifier: 5)
+    var isHistoryHotKeyRegistered: Bool {
+        hotKeyManager.isRegistered
+    }
+
+    var isOCRHotKeyRegistered: Bool {
+        ocrHotKeyManager.isRegistered
+    }
+
+    var canCopyAgainScreenOCR: Bool {
+        captureCoordinator.canCopyAgain
+    }
+
+    private let monitor: PasteboardMonitor
+    private let hotKeyManager: GlobalHotKeyManaging
+    private let gifHotKeyManager: GlobalHotKeyManaging
+    private let stackStartHotKeyManager: GlobalHotKeyManaging
+    private let stackNextHotKeyManager: GlobalHotKeyManaging
+    private let ocrHotKeyManager: GlobalHotKeyManaging
     private let panelController = ClipboardPanelController()
     private let screenshotCaptureService = ScreenshotCaptureService()
     private let screenGIFRecorder = ScreenGIFRecorder()
@@ -306,20 +340,41 @@ final class AppState: ObservableObject {
         static let requireAuthenticationForPrivateViews = "clipboard.requireAuthenticationForPrivateViews"
     }
 
-    private init() {
+    init(
+        store: ClipboardStore? = nil,
+        snippetStore: SnippetStore? = nil,
+        permissionsManager: PermissionsManager? = nil,
+        captureCoordinator: CaptureCoordinator? = nil,
+        monitor: PasteboardMonitor? = nil,
+        hotKeyManager: GlobalHotKeyManaging? = nil,
+        gifHotKeyManager: GlobalHotKeyManaging? = nil,
+        stackStartHotKeyManager: GlobalHotKeyManaging? = nil,
+        stackNextHotKeyManager: GlobalHotKeyManaging? = nil,
+        ocrHotKeyManager: GlobalHotKeyManaging? = nil
+    ) {
+        let actualMonitor = monitor ?? PasteboardMonitor()
+        let actualPermissions = permissionsManager ?? PermissionsManager()
         let savedHistoryLimit = UserDefaults.standard.integer(forKey: Keys.historyLimit)
         let savedRetention = UserDefaults.standard.string(forKey: Keys.retention)
             .flatMap(ClipboardRetention.init(rawValue:)) ?? .never
-        store = ClipboardStore(
+        let actualStore = store ?? ClipboardStore(
             limit: savedHistoryLimit == 0 ? 50 : savedHistoryLimit,
             retention: savedRetention
         )
-        snippetStore = SnippetStore()
-        captureCoordinator = CaptureCoordinator(
-            store: store,
-            monitor: monitor,
-            permissionsManager: permissionsManager
+        self.store = actualStore
+        self.snippetStore = snippetStore ?? SnippetStore()
+        self.permissionsManager = actualPermissions
+        self.monitor = actualMonitor
+        self.captureCoordinator = captureCoordinator ?? CaptureCoordinator(
+            store: actualStore,
+            monitor: actualMonitor,
+            permissionsManager: actualPermissions
         )
+        self.hotKeyManager = hotKeyManager ?? GlobalHotKeyManager(identifier: 1)
+        self.gifHotKeyManager = gifHotKeyManager ?? GlobalHotKeyManager(identifier: 2)
+        self.stackStartHotKeyManager = stackStartHotKeyManager ?? GlobalHotKeyManager(identifier: 3)
+        self.stackNextHotKeyManager = stackNextHotKeyManager ?? GlobalHotKeyManager(identifier: 4)
+        self.ocrHotKeyManager = ocrHotKeyManager ?? GlobalHotKeyManager(identifier: 5)
         let savedHotKey = (UserDefaults.standard.data(forKey: Keys.hotKey).flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }) ?? .default
 
         let savedGIFHotKey = HotKeyConfiguration.resolveGIFHotKey()
@@ -344,7 +399,7 @@ final class AppState: ObservableObject {
         oldStackStartHotKey = savedStackStartHotKey
         stackNextHotKey = savedStackNextHotKey
         oldStackNextHotKey = savedStackNextHotKey
-        historyLimit = store.limit
+        historyLimit = actualStore.limit
         retention = savedRetention
         ignoredBundleIdentifiers = savedIgnoredBundleIdentifiers
         appearance = savedAppearance
@@ -361,23 +416,23 @@ final class AppState: ObservableObject {
             }
         }
 
-        hotKeyManager.onHotKey = { [weak self] in
+        self.hotKeyManager.onHotKey = { [weak self] in
             self?.showPanel()
         }
-        gifHotKeyManager.onHotKey = { [weak self] in
+        self.gifHotKeyManager.onHotKey = { [weak self] in
             self?.toggleGIFRecording()
         }
-        ocrHotKeyManager.onHotKey = { [weak self] in
+        self.ocrHotKeyManager.onHotKey = { [weak self] in
             self?.startScreenOCR()
         }
-        stackStartHotKeyManager.onHotKey = { [weak self] in
+        self.stackStartHotKeyManager.onHotKey = { [weak self] in
             self?.startClipboardStack()
         }
-        stackNextHotKeyManager.onHotKey = { [weak self] in
+        self.stackNextHotKeyManager.onHotKey = { [weak self] in
             self?.pasteNextStackItem()
         }
-        monitor.ignoredBundleIdentifiers = savedIgnoredBundleIdentifiers
-        monitor.onSnapshot = { [weak self] snapshot, sourceApplication in
+        actualMonitor.ignoredBundleIdentifiers = savedIgnoredBundleIdentifiers
+        actualMonitor.onSnapshot = { [weak self] snapshot, sourceApplication in
             guard let self else { return }
             self.store.ingest(snapshot, sourceApplication: sourceApplication)
             guard self.isCapturingStack,
@@ -392,6 +447,7 @@ final class AppState: ObservableObject {
         hasStarted = true
         refreshAvailableApplications()
         refreshInstallationHealth()
+        refreshPermissions()
         monitor.ignoredBundleIdentifiers = ignoredBundleIdentifiers
         monitor.start()
         oldHotKey = hotKey
@@ -400,7 +456,7 @@ final class AppState: ObservableObject {
         oldStackStartHotKey = stackStartHotKey
         oldStackNextHotKey = stackNextHotKey
         if !hotKeyManager.register(hotKey) {
-            statusMessage = "Could not register \(hotKey.displayString)."
+            statusMessage = "Could not register \(hotKey.displayString); previous configuration kept."
         }
         if !gifHotKeyManager.register(gifHotKey) {
             statusMessage = "Could not register \(gifHotKey.displayString) for GIF recording."
@@ -412,7 +468,7 @@ final class AppState: ObservableObject {
         _ = stackNextHotKeyManager.register(stackNextHotKey)
         accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.isAccessibilityTrusted = AXIsProcessTrusted()
+                self?.isAccessibilityTrusted = self?.permissionsManager.isAccessibilityTrusted ?? AXIsProcessTrusted()
                 self?.refreshPauseState()
             }
         }
@@ -911,36 +967,49 @@ final class AppState: ObservableObject {
                 if registered {
                     self.oldHotKey = self.hotKey
                     self.hotKey = candidate
+                    self.persistHotKey(candidate, key: Keys.hotKey)
                 }
             case .gif:
                 registered = self.gifHotKeyManager.register(candidate)
                 if registered {
                     self.oldGIFHotKey = self.gifHotKey
                     self.gifHotKey = candidate
+                    self.persistHotKey(candidate, key: Keys.gifHotKey)
                 }
             case .ocr:
                 registered = self.ocrHotKeyManager.register(candidate)
                 if registered {
                     self.oldOCRHotKey = self.ocrHotKey
                     self.ocrHotKey = candidate
+                    self.persistHotKey(candidate, key: Keys.ocrHotKey)
                 }
             case .stackStart:
                 registered = self.stackStartHotKeyManager.register(candidate)
                 if registered {
                     self.oldStackStartHotKey = self.stackStartHotKey
                     self.stackStartHotKey = candidate
+                    self.persistOptionalHotKey(candidate, key: Keys.stackStartHotKey)
                 }
             case .stackNext:
                 registered = self.stackNextHotKeyManager.register(candidate)
                 if registered {
                     self.oldStackNextHotKey = self.stackNextHotKey
                     self.stackNextHotKey = candidate
+                    self.persistOptionalHotKey(candidate, key: Keys.stackNextHotKey)
                 }
             }
             if registered {
                 self.statusMessage = "Hotkey set: \(candidate.displayString)"
             } else {
-                self.statusMessage = "Combination unavailable."
+                let currentActive: String
+                switch target {
+                case .history: currentActive = self.hotKey.displayString
+                case .gif: currentActive = self.gifHotKey.displayString
+                case .ocr: currentActive = self.ocrHotKey.displayString
+                case .stackStart: currentActive = self.stackStartHotKey?.displayString ?? "Not set"
+                case .stackNext: currentActive = self.stackNextHotKey?.displayString ?? "Not set"
+                }
+                self.statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(currentActive)."
             }
             self.stopRecordingHotKey()
             return nil
@@ -973,6 +1042,10 @@ final class AppState: ObservableObject {
         case .history, .gif, .ocr:
             break
         }
+    }
+
+    private func persistHotKey(_ configuration: HotKeyConfiguration, key: String) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(configuration), forKey: key)
     }
 
     private func persistOptionalHotKey(_ configuration: HotKeyConfiguration?, key: String) {
@@ -1017,12 +1090,22 @@ final class AppState: ObservableObject {
         captureCoordinator.retryCapture()
     }
 
+    func copyAgainScreenOCR() {
+        captureCoordinator.copyAgain()
+    }
+
     func refreshInstallationHealth() {
         installationHealth = InstallationHealth.current()
     }
 
+    func refreshPermissions() {
+        permissionsManager.checkPermissions()
+        isAccessibilityTrusted = permissionsManager.isAccessibilityTrusted
+    }
+
     func copyDiagnostics() {
         refreshInstallationHealth()
+        refreshPermissions()
         let bundle = Bundle.main
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
@@ -1031,9 +1114,11 @@ final class AppState: ObservableObject {
             build: build,
             health: installationHealth,
             hasScreenRecordingPermission: permissionsManager.hasScreenRecordingPermission,
-            isAccessibilityTrusted: isAccessibilityTrusted,
+            isAccessibilityTrusted: permissionsManager.isAccessibilityTrusted,
             historyHotKey: hotKey.displayString,
-            ocrHotKey: ocrHotKey.displayString
+            isHistoryHotKeyRegistered: isHistoryHotKeyRegistered,
+            ocrHotKey: ocrHotKey.displayString,
+            isOCRHotKeyRegistered: isOCRHotKeyRegistered
         )
         let snapshot = ClipboardSnapshot(text: report, richTextData: nil, imageData: nil, imageType: nil, fileURLs: [])
         let pasteboard = NSPasteboard.general
@@ -1044,7 +1129,7 @@ final class AppState: ObservableObject {
             return
         }
         monitor.recordAppOriginatedWrite(changeCount: pasteboard.changeCount, fingerprint: snapshot.fingerprint)
-        statusMessage = "Redacted diagnostics copied to the clipboard."
+        statusMessage = "Diagnostics copied to clipboard. No clipboard contents, OCR text, or private data were included."
     }
 
     func openScreenRecordingSettings() {
@@ -1056,8 +1141,7 @@ final class AppState: ObservableObject {
     }
 
     func openAccessibilitySettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
-        NSWorkspace.shared.open(url)
+        permissionsManager.openAccessibilitySettings()
     }
 
     func captureAndAnnotate() {
@@ -1252,10 +1336,8 @@ final class AppState: ObservableObject {
             statusMessage = "Item restored to the clipboard. Press ⌘V to paste."
             return true
         }
-        guard AXIsProcessTrusted() else {
-            statusMessage = "Enable Accessibility for automatic paste."
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
+        guard permissionsManager.isAccessibilityTrusted else {
+            statusMessage = "Item copied to clipboard. Enable Accessibility for automatic paste."
             return true
         }
 

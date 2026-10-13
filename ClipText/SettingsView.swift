@@ -329,7 +329,7 @@ struct SettingsView: View {
 
                 settingsSection("Permissions") {
                     settingsCard {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 14) {
                             HStack {
                                 Label(
                                     "Screen Recording",
@@ -338,18 +338,24 @@ struct SettingsView: View {
                                         : "exclamationmark.triangle.fill"
                                 )
                                 Spacer()
-                                Text(appState.permissionsManager.hasScreenRecordingPermission ? "Granted" : "Required")
+                                Text(appState.permissionsManager.hasScreenRecordingPermission ? "Granted" : "Missing")
                                     .foregroundStyle(appState.permissionsManager.hasScreenRecordingPermission ? .green : .orange)
+                                    .accessibilityLabel("Screen Recording permission: \(appState.permissionsManager.hasScreenRecordingPermission ? "Granted" : "Missing")")
                             }
 
-                            Text("Required for selecting screen regions and recognizing text via Apple Vision. Relaunch ClipText after granting access for changes to take effect.")
+                            Text("Required for selecting screen regions and recognizing text via Apple Vision. Without Screen Recording, normal clipboard monitoring and history remain usable, but screen OCR cannot capture new content.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
 
                             if !appState.permissionsManager.hasScreenRecordingPermission {
+                                Text("If macOS opens the general Privacy & Security settings, scroll down to 'Screen Recording' and toggle ClipText on. Relaunch ClipText after granting access for changes to take effect.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+
                                 HStack {
-                                    Button("Open System Settings") {
+                                    Button("Open Screen Recording Settings") {
                                         appState.openScreenRecordingSettings()
                                     }
                                     .buttonStyle(.bordered)
@@ -362,35 +368,46 @@ struct SettingsView: View {
                                     .controlSize(.small)
                                 }
                             }
-                        }
-                    }
-                }
 
-                settingsSection("Automatic paste") {
-                    settingsCard {
-                        VStack(alignment: .leading, spacing: 12) {
+                            Divider()
+
                             HStack {
                                 Label(
                                     "Accessibility",
-                                    systemImage: appState.isAccessibilityTrusted
+                                    systemImage: appState.permissionsManager.isAccessibilityTrusted
                                         ? "checkmark.circle.fill"
                                         : "exclamationmark.triangle.fill"
                                 )
                                 Spacer()
-                                Text(appState.isAccessibilityTrusted ? "Active" : "Required")
-                                    .foregroundStyle(appState.isAccessibilityTrusted ? .green : .orange)
+                                Text(appState.permissionsManager.isAccessibilityTrusted ? "Active" : "Disabled")
+                                    .foregroundStyle(appState.permissionsManager.isAccessibilityTrusted ? .green : .secondary)
+                                    .accessibilityLabel("Accessibility permission: \(appState.permissionsManager.isAccessibilityTrusted ? "Active" : "Disabled")")
                             }
 
-                            Text(appState.isAccessibilityTrusted
-                                 ? "Accessibility is active for automatic caret placement and paste."
-                                 : "Accessibility is optional. ClipText will continue to copy selected history items, but automatic caret placement and paste require enabling ClipText in System Settings > Privacy & Security > Accessibility.")
+                            Text("Accessibility is optional. Without Accessibility, ordinary clipboard operations and copying OCR results remain available. Automatic paste and caret positioning require enabling ClipText in System Settings > Privacy & Security > Accessibility.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            if !appState.isAccessibilityTrusted {
+                            if !appState.permissionsManager.isAccessibilityTrusted {
+                                Text("If macOS opens the general Privacy & Security settings, scroll down to 'Accessibility' and toggle ClipText on.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+
                                 Button("Open Accessibility Settings") {
                                     appState.openAccessibilitySettings()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+
+                            Divider()
+
+                            HStack {
+                                Spacer()
+                                Button("Refresh Permissions") {
+                                    appState.refreshPermissions()
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
@@ -412,7 +429,7 @@ struct SettingsView: View {
                                         : "exclamationmark.shield.fill"
                                 )
                                 Spacer()
-                                Button("Refresh") {
+                                Button("Refresh Health") {
                                     appState.refreshInstallationHealth()
                                 }
                                 .buttonStyle(.bordered)
@@ -423,13 +440,17 @@ struct SettingsView: View {
                                 Text("Bundle ID: \(appState.installationHealth.bundleIdentifier)")
                                 Text("App path: \(appState.installationHealth.applicationPath)")
                                 Text("Signing: \(appState.installationHealth.signingSummary)")
+                                Text("Expected Identity Present: \(appState.installationHealth.isExpectedIdentityPresent ? "Yes" : "No")")
+                                Text("Expected Team ID: \(InstallationHealth.expectedTeamIdentifier)")
+                                Text("Actual Team ID: \(appState.installationHealth.teamIdentifier ?? "None")")
+                                Text("Designated requirement: \(appState.installationHealth.isDesignatedRequirementValid ? "Verified" : (appState.installationHealth.designatedRequirement != nil ? "Present" : "Unavailable"))")
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
 
                             if appState.installationHealth.duplicateInstallations.isEmpty {
-                                Text("No second ClipText installation was found.")
+                                Text("No second ClipText installation was found in known locations.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
@@ -439,7 +460,7 @@ struct SettingsView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
 
-                            Button("Copy Redacted Diagnostics") {
+                            Button("Copy Diagnostics") {
                                 appState.copyDiagnostics()
                             }
                             .buttonStyle(.bordered)
@@ -456,12 +477,22 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .accessibilityLabel("ClipText status: \(statusMessage)")
 
-                        if appState.canRetryScreenOCR {
-                            Button("Try Screen OCR Again") {
-                                appState.retryScreenOCR()
+                        HStack(spacing: 8) {
+                            if appState.canRetryScreenOCR {
+                                Button("Try Screen OCR Again") {
+                                    appState.retryScreenOCR()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+
+                            if appState.canCopyAgainScreenOCR {
+                                Button("Copy Recognized Text Again") {
+                                    appState.copyAgainScreenOCR()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
                         }
                     }
                 }

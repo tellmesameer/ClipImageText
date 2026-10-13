@@ -12,15 +12,20 @@ import CoreGraphics
 import Foundation
 
 @MainActor
-protocol PermissionsService {
+protocol PermissionsService: AnyObject {
     var hasScreenRecordingPermission: Bool { get }
+    var isAccessibilityTrusted: Bool { get }
+    func checkPermissions()
     func requestScreenRecordingPermission() async -> Bool
     func openScreenRecordingSettings()
+    func openAccessibilitySettings()
+    func relaunchApplication()
 }
 
 @MainActor
 final class PermissionsManager: ObservableObject, PermissionsService {
     @Published var hasScreenRecordingPermission: Bool = false
+    @Published var isAccessibilityTrusted: Bool = false
     @Published var permissionStatus: PermissionStatus = .unknown
     private var activationObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
@@ -29,6 +34,7 @@ final class PermissionsManager: ObservableObject, PermissionsService {
         case unknown
         case checking
         case screenRecordingDenied
+        case accessibilityDenied
         case allGranted
     }
 
@@ -67,19 +73,44 @@ final class PermissionsManager: ObservableObject, PermissionsService {
         permissionStatus = .checking
 
         let screenRecording = checkScreenRecordingPermission()
+        let accessibility = checkAccessibilityPermission()
+
+        let screenChanged = (screenRecording != hasScreenRecordingPermission)
+        let accessibilityChanged = (accessibility != isAccessibilityTrusted)
+
         hasScreenRecordingPermission = screenRecording
+        isAccessibilityTrusted = accessibility
 
         if !screenRecording {
             permissionStatus = .screenRecordingDenied
+        } else if !accessibility {
+            permissionStatus = .accessibilityDenied
         } else {
             permissionStatus = .allGranted
         }
 
-        Logger.shared.debug("Permissions - Screen: \(screenRecording)")
+        if screenChanged {
+            SanitizedDiagnosticsLog.shared.log(
+                category: "Permissions",
+                message: screenRecording ? "Screen recording granted" : "Screen recording missing"
+            )
+        }
+        if accessibilityChanged {
+            SanitizedDiagnosticsLog.shared.log(
+                category: "Permissions",
+                message: accessibility ? "Accessibility active" : "Accessibility disabled"
+            )
+        }
+
+        Logger.shared.debug("Permissions - Screen: \(screenRecording), Accessibility: \(accessibility)")
     }
 
     private func checkScreenRecordingPermission() -> Bool {
         CGPreflightScreenCaptureAccess()
+    }
+
+    private func checkAccessibilityPermission() -> Bool {
+        AXIsProcessTrusted()
     }
 
     func requestScreenRecordingPermission() async -> Bool {
@@ -93,6 +124,14 @@ final class PermissionsManager: ObservableObject, PermissionsService {
         let urls = [
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture",
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        ].compactMap(URL.init(string:))
+        openFirstAvailableSettingsURL(urls)
+    }
+
+    func openAccessibilitySettings() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         ].compactMap(URL.init(string:))
         openFirstAvailableSettingsURL(urls)
     }

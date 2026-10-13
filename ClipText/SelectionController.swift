@@ -156,7 +156,8 @@ private struct StatusPillView: View {
     var body: some View {
         Group {
             if let message {
-                Label(message, systemImage: "checkmark.circle.fill")
+                Label(message, systemImage: iconName(for: message))
+                    .accessibilityLabel("Status: \(message)")
             } else {
                 Image(systemName: "checkmark.circle.fill")
                     .accessibilityLabel("Copied")
@@ -172,5 +173,16 @@ private struct StatusPillView: View {
                 .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func iconName(for message: String) -> String {
+        let lower = message.lowercased()
+        if lower.contains("fail") || lower.contains("error") || lower.contains("required") || lower.contains("timed out") || lower.contains("unavailable") {
+            return "exclamationmark.triangle.fill"
+        }
+        if lower.contains("cancel") || lower.contains("no text") {
+            return "info.circle.fill"
+        }
+        return "checkmark.circle.fill"
     }
 }
