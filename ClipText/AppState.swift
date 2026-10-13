@@ -80,6 +80,7 @@ final class AppState: ObservableObject {
 
     @Published var hotKey: HotKeyConfiguration {
         didSet {
+            guard !isRollingBackHotKey else { return }
             guard hasStarted else {
                 oldHotKey = hotKey
                 persistHotKey(hotKey, key: Keys.hotKey)
@@ -88,13 +89,21 @@ final class AppState: ObservableObject {
             guard hotKey != oldHotKey else { return }
             guard !isHotKeyInUse(hotKey, excluding: .history) else {
                 statusMessage = "Hotkeys must be different."
+                isRollingBackHotKey = true
                 hotKey = oldHotKey
+                isRollingBackHotKey = false
                 return
             }
             let candidate = hotKey
             if !hotKeyManager.register(candidate) {
-                statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldHotKey.displayString)."
+                if hotKeyManager.isRegistered {
+                    statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldHotKey.displayString)."
+                } else {
+                    statusMessage = "Could not register shortcut \(candidate.displayString). Previous shortcut \(oldHotKey.displayString) could not be restored."
+                }
+                isRollingBackHotKey = true
                 hotKey = oldHotKey
+                isRollingBackHotKey = false
                 SanitizedDiagnosticsLog.shared.log(category: "HotKey", message: "Failed to register history hotkey")
             } else {
                 oldHotKey = candidate
@@ -105,6 +114,7 @@ final class AppState: ObservableObject {
 
     @Published var gifHotKey: HotKeyConfiguration {
         didSet {
+            guard !isRollingBackHotKey else { return }
             guard hasStarted else {
                 oldGIFHotKey = gifHotKey
                 persistHotKey(gifHotKey, key: Keys.gifHotKey)
@@ -113,13 +123,21 @@ final class AppState: ObservableObject {
             guard gifHotKey != oldGIFHotKey else { return }
             guard !isHotKeyInUse(gifHotKey, excluding: .gif) else {
                 statusMessage = "Hotkeys must be different."
+                isRollingBackHotKey = true
                 gifHotKey = oldGIFHotKey
+                isRollingBackHotKey = false
                 return
             }
             let candidate = gifHotKey
             if !gifHotKeyManager.register(candidate) {
-                statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldGIFHotKey.displayString)."
+                if gifHotKeyManager.isRegistered {
+                    statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldGIFHotKey.displayString)."
+                } else {
+                    statusMessage = "Could not register shortcut \(candidate.displayString). Previous shortcut \(oldGIFHotKey.displayString) could not be restored."
+                }
+                isRollingBackHotKey = true
                 gifHotKey = oldGIFHotKey
+                isRollingBackHotKey = false
                 SanitizedDiagnosticsLog.shared.log(category: "HotKey", message: "Failed to register GIF hotkey")
             } else {
                 oldGIFHotKey = candidate
@@ -130,6 +148,7 @@ final class AppState: ObservableObject {
 
     @Published var ocrHotKey: HotKeyConfiguration {
         didSet {
+            guard !isRollingBackHotKey else { return }
             guard hasStarted else {
                 oldOCRHotKey = ocrHotKey
                 persistHotKey(ocrHotKey, key: Keys.ocrHotKey)
@@ -138,13 +157,21 @@ final class AppState: ObservableObject {
             guard ocrHotKey != oldOCRHotKey else { return }
             guard !isHotKeyInUse(ocrHotKey, excluding: .ocr) else {
                 statusMessage = "Hotkeys must be different."
+                isRollingBackHotKey = true
                 ocrHotKey = oldOCRHotKey
+                isRollingBackHotKey = false
                 return
             }
             let candidate = ocrHotKey
             if !ocrHotKeyManager.register(candidate) {
-                statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldOCRHotKey.displayString)."
+                if ocrHotKeyManager.isRegistered {
+                    statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(oldOCRHotKey.displayString)."
+                } else {
+                    statusMessage = "Could not register shortcut \(candidate.displayString). Previous shortcut \(oldOCRHotKey.displayString) could not be restored."
+                }
+                isRollingBackHotKey = true
                 ocrHotKey = oldOCRHotKey
+                isRollingBackHotKey = false
                 SanitizedDiagnosticsLog.shared.log(category: "HotKey", message: "Failed to register OCR hotkey")
             } else {
                 oldOCRHotKey = candidate
@@ -155,6 +182,7 @@ final class AppState: ObservableObject {
 
     @Published var stackStartHotKey: HotKeyConfiguration? {
         didSet {
+            guard !isRollingBackHotKey else { return }
             guard hasStarted else {
                 oldStackStartHotKey = stackStartHotKey
                 persistOptionalHotKey(stackStartHotKey, key: Keys.stackStartHotKey)
@@ -163,15 +191,23 @@ final class AppState: ObservableObject {
             guard stackStartHotKey != oldStackStartHotKey else { return }
             guard !isHotKeyInUse(stackStartHotKey, excluding: .stackStart) else {
                 statusMessage = "That hotkey is already in use."
+                isRollingBackHotKey = true
                 stackStartHotKey = oldStackStartHotKey
+                isRollingBackHotKey = false
                 return
             }
             let candidate = stackStartHotKey
             if !stackStartHotKeyManager.register(candidate) {
                 let currentStr = oldStackStartHotKey?.displayString ?? "Not set"
                 let candidateStr = candidate?.displayString ?? "Not set"
-                statusMessage = "Could not register shortcut \(candidateStr). Keeping \(currentStr)."
+                if stackStartHotKeyManager.isRegistered || oldStackStartHotKey == nil {
+                    statusMessage = "Could not register shortcut \(candidateStr). Keeping \(currentStr)."
+                } else {
+                    statusMessage = "Could not register shortcut \(candidateStr). Previous shortcut \(currentStr) could not be restored."
+                }
+                isRollingBackHotKey = true
                 stackStartHotKey = oldStackStartHotKey
+                isRollingBackHotKey = false
             } else {
                 oldStackStartHotKey = candidate
                 persistOptionalHotKey(candidate, key: Keys.stackStartHotKey)
@@ -181,6 +217,7 @@ final class AppState: ObservableObject {
 
     @Published var stackNextHotKey: HotKeyConfiguration? {
         didSet {
+            guard !isRollingBackHotKey else { return }
             guard hasStarted else {
                 oldStackNextHotKey = stackNextHotKey
                 persistOptionalHotKey(stackNextHotKey, key: Keys.stackNextHotKey)
@@ -189,15 +226,23 @@ final class AppState: ObservableObject {
             guard stackNextHotKey != oldStackNextHotKey else { return }
             guard !isHotKeyInUse(stackNextHotKey, excluding: .stackNext) else {
                 statusMessage = "That hotkey is already in use."
+                isRollingBackHotKey = true
                 stackNextHotKey = oldStackNextHotKey
+                isRollingBackHotKey = false
                 return
             }
             let candidate = stackNextHotKey
             if !stackNextHotKeyManager.register(candidate) {
                 let currentStr = oldStackNextHotKey?.displayString ?? "Not set"
                 let candidateStr = candidate?.displayString ?? "Not set"
-                statusMessage = "Could not register shortcut \(candidateStr). Keeping \(currentStr)."
+                if stackNextHotKeyManager.isRegistered || oldStackNextHotKey == nil {
+                    statusMessage = "Could not register shortcut \(candidateStr). Keeping \(currentStr)."
+                } else {
+                    statusMessage = "Could not register shortcut \(candidateStr). Previous shortcut \(currentStr) could not be restored."
+                }
+                isRollingBackHotKey = true
                 stackNextHotKey = oldStackNextHotKey
+                isRollingBackHotKey = false
             } else {
                 oldStackNextHotKey = candidate
                 persistOptionalHotKey(candidate, key: Keys.stackNextHotKey)
@@ -318,6 +363,7 @@ final class AppState: ObservableObject {
     private var hasStarted = false
     private var isUpdatingLaunchAtLogin = false
     private var isAuthenticatingPrivateView = false
+    private var isRollingBackHotKey = false
     private var oldHotKey: HotKeyConfiguration
     private var oldGIFHotKey: HotKeyConfiguration
     private var oldOCRHotKey: HotKeyConfiguration
@@ -1001,15 +1047,31 @@ final class AppState: ObservableObject {
             if registered {
                 self.statusMessage = "Hotkey set: \(candidate.displayString)"
             } else {
+                let manager: GlobalHotKeyManaging
                 let currentActive: String
                 switch target {
-                case .history: currentActive = self.hotKey.displayString
-                case .gif: currentActive = self.gifHotKey.displayString
-                case .ocr: currentActive = self.ocrHotKey.displayString
-                case .stackStart: currentActive = self.stackStartHotKey?.displayString ?? "Not set"
-                case .stackNext: currentActive = self.stackNextHotKey?.displayString ?? "Not set"
+                case .history:
+                    manager = self.hotKeyManager
+                    currentActive = self.hotKey.displayString
+                case .gif:
+                    manager = self.gifHotKeyManager
+                    currentActive = self.gifHotKey.displayString
+                case .ocr:
+                    manager = self.ocrHotKeyManager
+                    currentActive = self.ocrHotKey.displayString
+                case .stackStart:
+                    manager = self.stackStartHotKeyManager
+                    currentActive = self.stackStartHotKey?.displayString ?? "Not set"
+                case .stackNext:
+                    manager = self.stackNextHotKeyManager
+                    currentActive = self.stackNextHotKey?.displayString ?? "Not set"
                 }
-                self.statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(currentActive)."
+                let isRestored = manager.isRegistered || (target == .stackStart && self.stackStartHotKey == nil) || (target == .stackNext && self.stackNextHotKey == nil)
+                if isRestored {
+                    self.statusMessage = "Could not register shortcut \(candidate.displayString). Keeping \(currentActive)."
+                } else {
+                    self.statusMessage = "Could not register shortcut \(candidate.displayString). Previous shortcut \(currentActive) could not be restored."
+                }
             }
             self.stopRecordingHotKey()
             return nil

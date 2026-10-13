@@ -23,8 +23,25 @@ final class GlobalHotKeyManager: GlobalHotKeyManaging {
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
-    init(identifier: UInt32 = 1) {
+    typealias RegistrationFunction = (
+        UInt32,
+        UInt32,
+        EventHotKeyID,
+        EventTargetRef?,
+        OptionBits,
+        UnsafeMutablePointer<EventHotKeyRef?>?
+    ) -> OSStatus
+
+    private let registerFunction: RegistrationFunction
+
+    init(
+        identifier: UInt32 = 1,
+        installHandler: Bool = true,
+        registerFunction: @escaping RegistrationFunction = RegisterEventHotKey
+    ) {
         self.identifier = identifier
+        self.registerFunction = registerFunction
+        guard installHandler else { return }
         var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         InstallEventHandler(
@@ -73,7 +90,7 @@ final class GlobalHotKeyManager: GlobalHotKeyManaging {
 
         let identifier = EventHotKeyID(signature: Self.signature, id: self.identifier)
         var newRef: EventHotKeyRef?
-        let status = RegisterEventHotKey(
+        let status = registerFunction(
             configuration.keyCode,
             configuration.modifiers,
             identifier,

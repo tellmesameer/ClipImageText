@@ -151,15 +151,22 @@ final class MockGlobalHotKeyManager: GlobalHotKeyManaging {
     var currentConfiguration: HotKeyConfiguration?
     var isRegistered: Bool { currentConfiguration != nil }
     var shouldFailRegistration = false
+    var shouldFailRestoration = false
     var registrationAttempts: [HotKeyConfiguration?] = []
+    var registrationCallCount = 0
 
     init(configuration: HotKeyConfiguration? = nil) {
         self.currentConfiguration = configuration
     }
 
+    @discardableResult
     func register(_ configuration: HotKeyConfiguration?) -> Bool {
+        registrationCallCount += 1
         registrationAttempts.append(configuration)
         if shouldFailRegistration {
+            if shouldFailRestoration {
+                currentConfiguration = nil
+            }
             return false
         }
         currentConfiguration = configuration
@@ -985,26 +992,93 @@ final class ScreenOCRTests: XCTestCase {
     }
 
     func testHotkeyRegistrationRollbackKeepsPreviousConfiguration() {
-        let manager = GlobalHotKeyManager(identifier: 42)
+        var registerAttempts: [UInt32] = []
+        var dummyRefCounter: UInt = 0x1000
+
+        let manager = GlobalHotKeyManager(
+            identifier: 42,
+            installHandler: false,
+            registerFunction: { keyCode, modifiers, id, target, options, outRef in
+                registerAttempts.append(keyCode)
+                if keyCode == 999999 {
+                    return OSStatus(eventHotKeyExistsErr)
+                }
+                dummyRefCounter += 1
+                outRef?.pointee = OpaquePointer(bitPattern: dummyRefCounter)
+                return noErr
+            }
+        )
+
         let initialConfig = HotKeyConfiguration(keyCode: 9, modifiers: UInt32(cmdKey | shiftKey))
         let registered = manager.register(initialConfig)
+        XCTAssertTrue(registered)
+        XCTAssertEqual(manager.currentConfiguration, initialConfig)
+        XCTAssertTrue(manager.isRegistered)
 
-        if registered {
-            XCTAssertEqual(manager.currentConfiguration, initialConfig)
-            XCTAssertTrue(manager.isRegistered)
+        // Attempting to register an invalid hotkey
+        let invalidConfig = HotKeyConfiguration(keyCode: 999999, modifiers: 0)
+        let secondResult = manager.register(invalidConfig)
 
-            // Attempting to register an invalid hotkey with keyCode 9999 or unregistered modifiers
-            let invalidConfig = HotKeyConfiguration(keyCode: 999999, modifiers: 0)
-            let secondResult = manager.register(invalidConfig)
-
-            // If second registration failed, manager must preserve initialConfig
-            if !secondResult {
-                XCTAssertEqual(manager.currentConfiguration, initialConfig)
-            }
-        }
+        // Second registration must fail and manager must preserve initialConfig
+        XCTAssertFalse(secondResult)
+        XCTAssertEqual(manager.currentConfiguration, initialConfig)
+        XCTAssertTrue(manager.isRegistered)
+        // Candidate attempt followed by rollback restoration
+        XCTAssertEqual(registerAttempts, [9, 999999, 9])
     }
 
-    func testAppStateHotkeyRollbackKeepsActiveConfigurationAndUpdatesSettings() {
+    func testGlobalHotKeyManagerRollbackDoesNotRecurseWhenRestorationFails() {
+        var callCount = 0
+        let manager = GlobalHotKeyManager(
+            identifier: 43,
+            installHandler: false,
+            registerFunction: { keyCode, modifiers, id, target, options, outRef in
+                callCount += 1
+                return OSStatus(eventHotKeyExistsErr)
+            }
+        )
+
+        let initialConfig = HotKeyConfiguration(keyCode: 9, modifiers: UInt32(cmdKey | shiftKey))
+        // With no initial registration, candidate failure does not attempt rollback
+        let initialResult = manager.register(initialConfig)
+        XCTAssertFalse(initialResult)
+        XCTAssertNil(manager.currentConfiguration)
+        XCTAssertFalse(manager.isRegistered)
+        XCTAssertEqual(callCount, 1)
+
+        // Test candidate failure where rollback restoration also fails
+        var dummyRef: UInt = 0x2000
+        var shouldFail = false
+        let managerWithInitial = GlobalHotKeyManager(
+            identifier: 44,
+            installHandler: false,
+            registerFunction: { keyCode, modifiers, id, target, options, outRef in
+                callCount += 1
+                if shouldFail {
+                    return OSStatus(eventHotKeyExistsErr)
+                }
+                dummyRef += 1
+                outRef?.pointee = OpaquePointer(bitPattern: dummyRef)
+                return noErr
+            }
+        )
+        _ = managerWithInitial.register(initialConfig)
+        XCTAssertTrue(managerWithInitial.isRegistered)
+
+        // Now simulate both candidate registration and rollback restoration failing
+        shouldFail = true
+        let attemptsBefore = callCount
+        let candidate = HotKeyConfiguration(keyCode: 11, modifiers: 0)
+        let candidateResult = managerWithInitial.register(candidate)
+
+        XCTAssertFalse(candidateResult)
+        XCTAssertNil(managerWithInitial.currentConfiguration)
+        XCTAssertFalse(managerWithInitial.isRegistered)
+        // Exactly 2 attempts: 1 candidate, 1 rollback restoration, zero infinite recursion
+        XCTAssertEqual(callCount - attemptsBefore, 2)
+    }
+
+    func testAppStateHotkeyCandidateFailureWithSuccessfulRestorationKeepsActiveAndReportsKeeping() {
         let mockManager = MockGlobalHotKeyManager()
         let initialHotKey = HotKeyConfiguration.default
         _ = mockManager.register(initialHotKey)
@@ -1017,16 +1091,126 @@ final class ScreenOCRTests: XCTestCase {
         appState.start()
 
         XCTAssertEqual(appState.hotKey, initialHotKey)
+        XCTAssertTrue(appState.isHistoryHotKeyRegistered)
 
-        // Simulate failure on next registration
+        // Reset call count before user change
+        mockManager.registrationCallCount = 0
         mockManager.shouldFailRegistration = true
+        mockManager.shouldFailRestoration = false
+
         let candidate = HotKeyConfiguration(keyCode: 11, modifiers: UInt32(controlKey | optionKey | cmdKey))
         appState.hotKey = candidate
 
-        // Must roll back to initial hotkey
+        // Candidate failed, restoration succeeded:
+        // Must roll back property to initial hotkey, keep manager registered, and report 'Keeping'
         XCTAssertEqual(appState.hotKey, initialHotKey)
+        XCTAssertTrue(mockManager.isRegistered)
+        XCTAssertTrue(appState.isHistoryHotKeyRegistered)
         XCTAssertTrue(appState.statusMessage?.contains("Could not register") == true)
         XCTAssertTrue(appState.statusMessage?.contains("Keeping") == true)
+        // Confirm property-observer re-entrancy terminated cleanly after the rollback assignment without extra registration calls
+        XCTAssertEqual(mockManager.registrationCallCount, 1)
+    }
+
+    func testAppStateHotkeyCandidateFailureWithFailedRestorationReportsRestorationFailure() {
+        let mockManager = MockGlobalHotKeyManager()
+        let initialHotKey = HotKeyConfiguration.default
+        _ = mockManager.register(initialHotKey)
+
+        let appState = AppState(
+            store: ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher),
+            hotKeyManager: mockManager
+        )
+        defer { appState.stop() }
+        appState.start()
+
+        XCTAssertEqual(appState.hotKey, initialHotKey)
+        XCTAssertTrue(appState.isHistoryHotKeyRegistered)
+
+        mockManager.registrationCallCount = 0
+        mockManager.shouldFailRegistration = true
+        mockManager.shouldFailRestoration = true
+
+        let candidate = HotKeyConfiguration(keyCode: 11, modifiers: UInt32(controlKey | optionKey | cmdKey))
+        appState.hotKey = candidate
+
+        // Candidate failed, restoration failed:
+        // Must roll back property to initial hotkey, reflect unregistered status, and report restoration failure
+        XCTAssertEqual(appState.hotKey, initialHotKey)
+        XCTAssertFalse(mockManager.isRegistered)
+        XCTAssertFalse(appState.isHistoryHotKeyRegistered)
+        XCTAssertTrue(appState.statusMessage?.contains("could not be restored") == true)
+        XCTAssertEqual(mockManager.registrationCallCount, 1)
+    }
+
+    func testAppStateOCRHotkeyObserverRollbackAndRestorationFailure() {
+        let mockOCRManager = MockGlobalHotKeyManager()
+        let initialOCRHotKey = HotKeyConfiguration.ocrDefault
+        _ = mockOCRManager.register(initialOCRHotKey)
+
+        let appState = AppState(
+            store: ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher),
+            ocrHotKeyManager: mockOCRManager
+        )
+        defer { appState.stop() }
+        appState.start()
+
+        XCTAssertEqual(appState.ocrHotKey, initialOCRHotKey)
+        XCTAssertTrue(appState.isOCRHotKeyRegistered)
+
+        // Case 1: Candidate fails, restoration succeeds
+        mockOCRManager.registrationCallCount = 0
+        mockOCRManager.shouldFailRegistration = true
+        mockOCRManager.shouldFailRestoration = false
+
+        let candidate1 = HotKeyConfiguration(keyCode: 14, modifiers: UInt32(controlKey | optionKey))
+        appState.ocrHotKey = candidate1
+
+        XCTAssertEqual(appState.ocrHotKey, initialOCRHotKey)
+        XCTAssertTrue(mockOCRManager.isRegistered)
+        XCTAssertTrue(appState.isOCRHotKeyRegistered)
+        XCTAssertTrue(appState.statusMessage?.contains("Keeping") == true)
+        XCTAssertEqual(mockOCRManager.registrationCallCount, 1)
+
+        // Case 2: Candidate fails, restoration fails
+        mockOCRManager.registrationCallCount = 0
+        mockOCRManager.shouldFailRegistration = true
+        mockOCRManager.shouldFailRestoration = true
+
+        let candidate2 = HotKeyConfiguration(keyCode: 15, modifiers: UInt32(controlKey | optionKey))
+        appState.ocrHotKey = candidate2
+
+        XCTAssertEqual(appState.ocrHotKey, initialOCRHotKey)
+        XCTAssertFalse(mockOCRManager.isRegistered)
+        XCTAssertFalse(appState.isOCRHotKeyRegistered)
+        XCTAssertTrue(appState.statusMessage?.contains("could not be restored") == true)
+        XCTAssertEqual(mockOCRManager.registrationCallCount, 1)
+    }
+
+    func testAppStateHotkeyRepeatedObserverExecutionGuardsAgainstUnnecessaryRegistrations() {
+        let mockManager = MockGlobalHotKeyManager()
+        let initialHotKey = HotKeyConfiguration.default
+        _ = mockManager.register(initialHotKey)
+
+        let appState = AppState(
+            store: ClipboardStore(directoryURL: temporaryDirectory, cipher: testCipher),
+            hotKeyManager: mockManager
+        )
+        defer { appState.stop() }
+        appState.start()
+
+        mockManager.registrationCallCount = 0
+
+        // Setting hotkey to the exact current value must return immediately without invoking register
+        appState.hotKey = initialHotKey
+        XCTAssertEqual(mockManager.registrationCallCount, 0)
+
+        // Setting hotkey to a combination already in use (e.g. ocrHotKey) must revert without calling register
+        let duplicateCandidate = appState.ocrHotKey
+        appState.hotKey = duplicateCandidate
+        XCTAssertEqual(appState.hotKey, initialHotKey)
+        XCTAssertEqual(appState.statusMessage, "Hotkeys must be different.")
+        XCTAssertEqual(mockManager.registrationCallCount, 0)
     }
 
     func testInstallationHealthSigningStatusVariants() {
